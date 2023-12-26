@@ -12,7 +12,7 @@ class FramePublisher():
     def __init__(self):
         self.node = rclpy.create_node('giraff_robot')
         self.tf_broadcaster = tf2_ros.TransformBroadcaster(self.node)
-        self.publish_rate = 1
+        self.publish_rate = 10
         self.rate = self.node.create_rate(self.publish_rate)
 
 

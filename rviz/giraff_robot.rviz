@@ -1,0 +1,18 @@
+global_options:
+  fixed_frame: "base_link"  # Set the fixed frame for your robot
+  background_color: {r: 0.0, g: 0.0, b: 0.0, a: 1.0}  # Background color
+
+# Add a RobotModel component for the URDF model
+Displays:
+  RobotModel:
+    Robot Description: robot_description
+    Visual Enabled: true
+    Collision Enabled: true
+    Robot Description Type: URDF
+
+TF:
+   Name: "TF"
+   Enabled: true
+   Use Fixed Frame: true
+   Auto Hide: false
+   Show Axes: true

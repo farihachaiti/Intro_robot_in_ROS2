@@ -1,6 +1,7 @@
 import rclpy
 from geometry_msgs.msg import TransformStamped
 import tf2_ros
+from tf2_ros import Buffer, TransformListener, Duration
 import tf2_geometry_msgs  # This import is necessary for using transform_datatypes
 import math
 import numpy as np
@@ -11,10 +12,13 @@ class FramePublisher():
 
     def __init__(self):
         self.node = rclpy.create_node('giraff_robot')
-        self.tf_broadcaster = tf2_ros.TransformBroadcaster(self.node)
+        self.tf_broadcaster = tf2_ros.StaticTransformBroadcaster(self.node)
         self.publish_rate = 10
         self.rate = self.node.create_rate(self.publish_rate)
-
+        buffer_size = 10.0
+        self.tf_buffer = Buffer(cache_time=Duration(seconds=10.0, nanoseconds=10.0))
+        #self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self.node)
 
     def quaternion_from_euler(self, ai, aj, ak):
         ai /= 2.0
@@ -60,29 +64,34 @@ class FramePublisher():
         try:
              self.tf_broadcaster.sendTransform(t)
              print("Successfully published transform.")
+             print(f"Transform lookup time: {t.header.stamp}")
+             print(f"{t.child_frame_id}")
+             print(f"{t.header.frame_id}")
         except Exception as e:
              print(f"Failed to publish transform {e}.")
+             print(f"Transform lookup time: {t.header.stamp}")
         self.rate.sleep()
 
 def main():
     rclpy.init()
     robot = FramePublisher()
 
-    timer_period = 1.0
-    #while rclpy.ok():
-    timer1 = robot.node.create_timer(timer_period, lambda:robot.publish_tf(1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'leg_link', 'base_link'))
-    timer2 = robot.node.create_timer(timer_period, lambda:robot.publish_tf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'arm_link', 'leg_link'))
-    #timer3 = robot.node.create_timer(timer_period, lambda:robot.publish_tf(1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'arm_link', 'leg_link'))
-    timer3 = robot.node.create_timer(timer_period, lambda:robot.publish_tf(1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'end_effector', 'arm_link'))
-    while rclpy.ok():
-        rclpy.spin_once(robot.node)
+    timer_period = 1.0 #upload this file to vm
+    try:
+        while rclpy.ok():
+    	    timer1 = robot.node.create_timer(1.0, lambda:robot.publish_tf(1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'leg_link', 'base_link'))
+    	    timer2 = robot.node.create_timer(1.1, lambda:robot.publish_tf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'arm_link', 'leg_link'))
+    	    timer3 = robot.node.create_timer(1.1, lambda:robot.publish_tf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'end_effector', 'arm_link'))
 
-    timer1.cancel()
-    timer2.cancel()
-    timer3.cancel()
-    #timer4.cancel()
-    robot.node.destroy_node()
-    rclpy.shutdown()
+    	    rclpy.spin(robot.node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        timer1.cancel()
+        timer2.cancel()
+        timer3.cancel()
+        robot.node.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == '__main__':
     main()

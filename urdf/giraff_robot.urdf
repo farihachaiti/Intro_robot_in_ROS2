@@ -110,10 +110,21 @@
     </link>
 
 
-    <joint name="base_joint" type="fixed">
+    <joint name="base_joint" type="revolute">
         <parent link="world"/>
         <child link="base_link"/>
         <origin rpy="0 0 0" xyz="0 0 0"/>
+        <axis xyz="0 0 1" />
+        <safety_controller k_position="3.1416" k_velocity="1.0" k_effort="100.0"/>
+        <calibration rising="0.0" falling="0.0"/>
+        <dynamics damping="0.0" friction="0.0"/>
+        <limit lower="-3.1416" upper="3.1416" effort="100.0" velocity="1.0" />
+        <visual>
+            <geometry>
+                <sphere radius="0.5"/>
+            </geometry>
+            <material name="blue"/>
+        </visual> 
     </joint>
     <joint name="base_spherical_joint" type="revolute">
         <parent name="base_link"/>
@@ -131,7 +142,7 @@
             <material name="blue"/>
         </visual> 
     </joint>
-    <joint name="neck_prismatic_joint" type="prismatic">
+    <joint name="leg_joint" type="prismatic">
         <parent link="leg_link"/>
         <child link="arm_link"/>
         <origin xyz="0 0 0" rpy="0 0 0"/>

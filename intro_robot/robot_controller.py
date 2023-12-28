@@ -4,21 +4,76 @@ import sympy as sp
 
 import rclpy
 from rclpy.node import Node
-from gazebo_msgs.msg import ApplyJointEffort
-from std_msgs.msg import Float64
+from control_msgs.msg import JointTrajectoryControllerState
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 class RobotController(Node):
     def __init__(self):
         super().__init__('robot_controller')
+    
+    def get_cost(self, config1, config2):
+        return np.linalg.norm(config1 - config2)
+    
+    def nearest(self, graph, new_node):
+        nearest = None
+        min_distance = float('inf')
+
+        for node in graph:
+            distance = self.get_cost(node, new_node)
+            if distance < min_distance:
+                min_distance = distance
+                nearest = node
+
+        return nearest
+
+
+    def extend(self, q_nearest, q_random, step_size=0.1):
+        new_node = np.zeros(4)
+
+        # Extend from the nearest node towards the sampled point
+        delta_x1 = q_random.x1 - q_nearest.x1
+        delta_x2 = q_random.x2 - q_nearest.x2
+        delta_x3 = q_random.x3 - q_nearest.x3
+        delta_x4 = q_random.x4 - q_nearest.x4
+        norm = np.linalg.norm([delta_x1, delta_x2, delta_x3, delta_x4])
+        delta_x1 /= norm
+        delta_x2 /= norm
+        delta_x3 /= norm
+        delta_x4 /= norm
+
+        new_x1 = q_nearest.x1 + step_size * delta_x1
+        new_x2 = q_nearest.x2 + step_size * delta_x2
+        new_x3 = q_nearest.x3 + step_size * delta_x3
+        new_x4 = q_nearest.x4 + step_size * delta_x4
+        new_node[0] = new_x1
+        new_node[1] = new_x2
+        new_node[2] = new_x3
+        new_node[3] = new_x4
+        #new_node.p = q_nearest
+
+        return new_node
+    
+    def rewire(self, graph, q_new, goal_cost):
+        for node in graph:
+            if node == q_new or self.get_cost(q_new, node) > goal_cost:
+                continue
+
+            tentative_cost = q_new.cost + self.get_cost(q_new, node)
+            if tentative_cost < node.cost:
+                # Update parent if the new connection is more efficient
+                node.parent = q_new
+                node.cost = tentative_cost
+         
 
     def get_trajectory(self, q_goal, q_init, q_parent):
-         graph = [q_init]
-         while self.get_cost(q_goal,q_init) < self.get_cost(q_goal,q_parent):
+        graph = [q_init]
+        while self.get_cost(q_goal,q_init) < self.get_cost(q_goal,q_parent):
             q_random = Node(np.random.uniform(0, 10), np.random.uniform(0, 10), np.random.uniform(0, 10), np.random.uniform(0, 10))
             if self.is_clear(q_random):
                 q_nearest = self.nearest(graph, q_random)
                 q_new = self.extend(q_nearest, q_random)
-                near_nodes = [node for node in graph if self.get_cost(q_new, node) < max_distance]
+                q_parent = q_nearest
+                near_nodes = [node for node in graph if self.get_cost(q_new, node) < self.get_cost(q_goal,q_parent)]
 
                 for near_node in near_nodes:
                     if self.get_cost(q_goal, near_node) + self.get_cost(q_new, near_node) < min_cost and self.is_clear(near_node):
@@ -28,6 +83,8 @@ class RobotController(Node):
                 q_parent = min_cost_node
                 graph.append(q_new)
                 self.rewire(graph, q_new, self.get_cost(q_goal,q_parent))
+
+        return graph
 
 
     def compute_inertia_matrix(self, Ixx, Iyy, Izz, T, m):
@@ -97,7 +154,7 @@ class RobotController(Node):
 
     def compute_forward_kinematics_from_configuration(self, q):
             # Extract joint angles and prismatic displacements
-            theta1, d2, theta3, theta4 = q
+            theta1, theta2, d3, theta4 = q
             
             # Define robot parameters (replace these with the actual parameters of your robot)
             L1 = 0.1
@@ -106,33 +163,41 @@ class RobotController(Node):
             L4 = 0.6
 
             T01 =  np.array([
-            [1, 0, 0, -L1],
+            [1, 0, 0, 0],
             [0, np.cos(theta1), -np.sin(theta1), 0],
-            [0, np.sin(theta1), np.cos(theta1), 0],
+            [0, np.sin(theta1), np.cos(theta1), L1],
             [0, 0, 0, 1]
         ])
             
             T12 =  np.array([
-            [1, 0, 0, -d2-L2],
-            [0, 1, 0, 0],
-            [0, 0, 1, 0],
+            [1, 0, 0, 0],
+            [0, np.cos(theta2), -np.sin(theta2), 0],
+            [0, np.sin(theta2), np.cos(theta2), L2],
             [0, 0, 0, 1]
         ])
-            
+           
             T23 =  np.array([
-            [np.cos(theta3), 0, -np.sin(theta3), 0],
+            [1, 0, 0, 0],
             [0, 1, 0, 0],
-            [np.sin(theta3), 0, np.cos(theta3), L3],
+            [0, 0, 1, d3+L3],
             [0, 0, 0, 1]
         ])
             
-            T3ee =  np.array([
-            [np.cos(theta4), 0, -np.sin(theta4), -L4],
-            [0, 1, 0, 0],
-            [np.sin(theta4), 0, np.cos(theta4), 0],
+
+            T34 =  np.array([
+            [1, 0, 0, -L4],
+            [0, np.cos(theta4), -np.sin(theta4), 0],
+            [0, np.sin(theta4), np.cos(theta4), 0],
             [0, 0, 0, 1]
         ])
-            T_total = T01 @ T12 @ T23 @ T3ee
+ 
+            T4ee =  np.array([
+            [np.cos(np.radians(30)), 0, -np.sin(np.radians(30)), 0],
+            [0, 1, 0, 0],
+            [np.sin(np.radians(30)), 0, np.cos(np.radians(30)), 0],
+            [0, 0, 0, 1]
+        ])
+            T_total = T01 @ T12 @ T23 @ T34 @ T4ee
 
             x = T_total[0, 3]
             y = T_total[1, 3]
@@ -143,73 +208,155 @@ class RobotController(Node):
             #z = d2 + L2 + L5
             
             return np.array([x, y, z])
+    
 
-    def compute_motion(self, p_desired):
+    def compute_direct_differential_kinematics_from_configuration(self, q):
+        theta1, theta2, d3, theta4 = q
+           
+        # Define robot parameters (replace these with the actual parameters of your robot)
+        L1 = 0.1
+        L2 = 0.6
+        L3 = 0.6
+        L4 = 0.6
 
-            # Given end effector position matrix 
-            p_desired = np.array([1, 2, 1])
+        T01 =  np.array([
+        [1, 0, 0, 0],
+        [0, np.cos(theta1), -np.sin(theta1), 0],
+        [0, np.sin(theta1), np.cos(theta1), L1],
+        [0, 0, 0, 1]
+    ])
+        
+        T12 =  np.array([
+        [1, 0, 0, 0],
+        [0, np.cos(theta2), -np.sin(theta2), 0],
+        [0, np.sin(theta2), np.cos(theta2), L2],
+        [0, 0, 0, 1]
+    ])
+        
+        T23 =  np.array([
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, d3+L3],
+        [0, 0, 0, 1]
+    ])
+        
 
-            # Initial guess for joint positions
-            q_current = np.array([0, 0, 0, 0])
+        T34 =  np.array([
+        [1, 0, 0, -L4],
+        [0, np.cos(theta4), -np.sin(theta4), 0],
+        [0, np.sin(theta4), np.cos(theta4), 0],
+        [0, 0, 0, 1]
+    ])
 
-            # Desired tolerance for convergence
-            tolerance = 1e-6
+        T4ee =  np.array([
+        [np.cos(np.radians(30)), 0, -np.sin(np.radians(30)), 0],
+        [0, 1, 0, 0],
+        [np.sin(np.radians(30)), 0, np.cos(np.radians(30)), 0],
+        [0, 0, 0, 1]
+    ])
+        T02 = np.dot(T01, T12)
+        T03 = np.dot(T02, T23)
+        T04 = np.dot(T03, T34)
+        T0ee = np.dot(T04, T4ee)
 
-            # Maximum number of iterations
-            max_iterations = 100
+        P01 = T01[:, 3]
+        P02 = T02[:, 3]
+        P03 = T03[:, 3]
+        P04 = T04[:, 3]
+        P0ee = T0ee[:, 3]
 
-            # Numerical inverse kinematics using the Jacobian inverse method
-            for iteration in range(max_iterations):
-                p_current = self.compute_forward_kinematics_from_configuration(q_current)
-                error = p_desired - p_current
+        Z1 = Z2 = Z4 = np.array([1, 0, 0])
+        Z3 = d3
+        Z5 = np.array([0, 1, 0])
+        J1 = Z1 @ (P0ee - P01)
+        J2 = Z2 @ (P0ee - P02)
+        J3 = np.array([Z3, 0])
+        J4 = Z4 @ (P0ee - P03)
+        J5 = Z5 @ (P0ee - P04)
 
-                # Check if the error is below the tolerance
-                if np.linalg.norm(error) < tolerance:
-                    print("Converged!")
-                    q_desired = q_current
-                    q_dot_desired = np.gradient(q_desired, dt=0.01, axis=0, edge_order=2)
-                    q_ddot_desired = np.gradient(q_dot_desired, dt=0.01, axis=0, edge_order=2)
-                    break
+        J = np.array([J1, J2, J3, J4, J5])
 
-                # Compute Jacobian matrix
-                #J = compute_jacobian(q_current)
+        return J
 
-                # Compute joint velocities using the Jacobian inverse
-                q_dot = np.gradient(q_current, dt=0.01, axis=0, edge_order=2)
+    def compute_motion(self, p_desired, graph):
+        # Given end effector position matrix 
+        p_desired = np.array([1, 2, 1])
+        tau = []
 
-                # Update joint positions using the computed velocities
-                q_current += q_dot
-            
-            # Print the result
-            return self.inverse_dynamics(q_ddot_desired, q_dot_desired, q_desired, q_dot, q_current)
-      
+        # Initial guess for joint positions
+        #q_current = np.array([0, 0, 0, 0])
+
+        # Desired tolerance for convergence
+        tolerance = 1e-6
+
+        # Maximum number of iterations
+        max_iterations = 100
+
+        # Numerical inverse kinematics using the Jacobian inverse method
+        for q_current in graph:
+            p_current = self.compute_forward_kinematics_from_configuration(q_current)
+            error = p_desired - p_current
+
+            # Check if the error is below the tolerance
+            if np.linalg.norm(error) < tolerance:
+                print("Converged!")
+                q_desired = q_current
+                q_dot_desired = np.gradient(q_desired, dt=0.01, axis=0, edge_order=2)
+                q_ddot_desired = np.gradient(q_dot_desired, dt=0.01, axis=0, edge_order=2)
+                break
+
+            # Compute Jacobian matrix
+            #J = compute_jacobian(q_current)
+
+            # Compute joint velocities using the Jacobian inverse
+            q_dot = np.gradient(q_current, dt=0.01, axis=0, edge_order=2)
+
+            # Update joint positions using the computed velocities
+            q_current += q_dot
+        
+        # Print the result
+            tau.append(self.inverse_dynamics(q_ddot_desired, q_dot_desired, q_desired, q_dot, q_current))
+        return tau
 
         #!/usr/bin/env python
  
     def apply_torque(self, joint_name, torque):
-        pub = self.create_publisher(ApplyJointEffort, '/gazebo/apply_joint_effort', 10)
-        effort = ApplyJointEffort()
-        effort.joint_name = joint_name
-        effort.effort = torque
-        effort.start_time.sec = 0
-        effort.start_time.nanosec = 0
-        effort.duration.sec = 0
-        effort.duration.nanosec = int(1e8)  # Duration of 0.1 seconds
-        pub.publish(effort)
+        msg = JointTrajectory()
+        msg.joint_names = [joint_name]
+        point = JointTrajectoryPoint()
+        point.positions = [0.0]  # Set the joint position if required
+        point.velocities = [0.0]  # Set the joint velocity if required
+        point.effort = [torque]
+        msg.points = [point]
+        self.publisher.publish(msg)
 
     def control_script(self, joints, tau):
-
        # Specify joint name (replace 'joint1' with your joint name)
-        for i in range(5):
+        for i in range(4):
             self.apply_torque(joints[i], tau[i])
 
- 
+    def solve_numerical_inverse_kinematics(self, q_initial, target_position):
+        q_result = q_initial.copy()
+
+        for iteration in range(100):
+            J = self.compute_direct_differential_kinematics_from_configuration(q_initial)
+            delta_theta = np.linalg.pinv(J) @ (target_position - self.compute_forward_kinematics_from_configuration(q_initial))
+            q_result += delta_theta
+
+            if np.linalg.norm(delta_theta) < 1e-6:
+                break
+
+        return q_result
+
+
 
 def main():
     rclpy.init()
     node = RobotController()
-    tau = node.compute_motion(np.array([1,2,1]))
-    joints = np.array(['base_joint', 'base_spherical_joint', 'neck_prismatic_joint', 'arm_joint', 'end_effector_joint'])
+    q_goal = node.solve_numerical_inverse_kinematics(np.array([0, 0, 0, 0], np.array([1,2,1])))
+    graph = node.get_trajectory(q_goal, np.array([0, 0, 0, 0]), np.array([0, 0, 0, 0]))
+    tau = node.compute_motion(np.array([1,2,1]), graph)
+    joints = np.array(['base_joint', 'base_spherical_joint', 'leg_joint', 'arm_joint'])
     node.control_script(tau, joints)
 
     # Calculate end-effector position

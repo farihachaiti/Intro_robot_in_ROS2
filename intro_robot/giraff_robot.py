@@ -80,7 +80,7 @@ def main():
     try:
         while rclpy.ok():
     	    timer1 = robot.node.create_timer(1.0, lambda:robot.publish_tf(1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'leg_link', 'base_link'))
-    	    timer2 = robot.node.create_timer(1.1, lambda:robot.publish_tf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'arm_link', 'leg_link'))
+            timer2 = robot.node.create_timer(1.1, lambda:robot.publish_tf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'arm_link', 'leg_link'))
     	    timer3 = robot.node.create_timer(1.1, lambda:robot.publish_tf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'end_effector', 'arm_link'))
 
     	    rclpy.spin(robot.node)

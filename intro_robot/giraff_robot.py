@@ -1,7 +1,6 @@
 import rclpy
 from geometry_msgs.msg import TransformStamped
 import tf2_ros
-from tf2_ros import Buffer, TransformListener, Duration
 import tf2_geometry_msgs  # This import is necessary for using transform_datatypes
 import math
 import numpy as np
@@ -15,10 +14,7 @@ class FramePublisher():
         self.tf_broadcaster = tf2_ros.StaticTransformBroadcaster(self.node)
         self.publish_rate = 10
         self.rate = self.node.create_rate(self.publish_rate)
-        buffer_size = 10.0
-        self.tf_buffer = Buffer(cache_time=Duration(seconds=10.0, nanoseconds=10.0))
-        #self.tf_buffer = Buffer()
-        self.tf_listener = TransformListener(self.tf_buffer, self.node)
+
 
     def quaternion_from_euler(self, ai, aj, ak):
         ai /= 2.0
@@ -79,11 +75,11 @@ def main():
     timer_period = 1.0 #upload this file to vm
     try:
         while rclpy.ok():
-    	    timer1 = robot.node.create_timer(1.0, lambda:robot.publish_tf(1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'leg_link', 'base_link'))
+            timer1 = robot.node.create_timer(1.0, lambda:robot.publish_tf(1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'leg_link', 'base_link'))
             timer2 = robot.node.create_timer(1.1, lambda:robot.publish_tf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'arm_link', 'leg_link'))
-    	    timer3 = robot.node.create_timer(1.1, lambda:robot.publish_tf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'end_effector', 'arm_link'))
+            timer3 = robot.node.create_timer(1.1, lambda:robot.publish_tf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'end_effector', 'arm_link'))
 
-    	    rclpy.spin(robot.node)
+            rclpy.spin(robot.node)
     except KeyboardInterrupt:
         pass
     finally:

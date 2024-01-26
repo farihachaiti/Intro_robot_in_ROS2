@@ -13,6 +13,7 @@ setup(
         ('share/' + package_name + '/launch' , ['launch/giraff_robot.launch.py']),
         ('share/' + package_name + '/urdf' , ['urdf/giraff_robot.urdf']),
         ('share/' + package_name + '/rviz' , ['rviz/giraff_robot.rviz']),
+        ('share/' + package_name + '/worlds' , ['worlds/world.world']),
     ],
 
     install_requires=['setuptools'],
@@ -24,7 +25,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-          'giraff_robot = intro_robot.giraff_robot:main'
+          'giraff_robot = intro_robot.giraff_robot:main',
+          'robot_controller = intro_robot.robot_controller:main'
      ],
     },
 )

@@ -6,11 +6,47 @@ import rclpy
 from rclpy.node import Node
 from control_msgs.msg import JointTrajectoryControllerState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from gazebo_msgs.srv import ApplyJointEffort
+from sensor_msgs.msg import JointState
+from geometry_msgs.msg import TransformStamped
+import tf2_ros
+
 
 class RobotController(Node):
     def __init__(self):
         super().__init__('robot_controller')
+        buffer_size = 10.0
+        self.tf_buffer = tf2_ros.Buffer(cache_time=tf2_ros.Duration(seconds=10.0, nanoseconds=10.0))
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+        self.joint_trajectory_publisher = self.create_publisher(JointTrajectory, '/joint_trajectory', 10)
+        self.joint_state_publisher = self.create_publisher(JointState, '/joint_states', 10)
+        self.joint_effort_srv_client= self.create_client(ApplyJointEffort, '/gazebo_msgs/apply_joint_effort')
     
+
+            # Wait for the service to be available
+        while not self.joint_effort_srv_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('Service not available, waiting...')
+
+                # Subscribe to TF data
+        self.create_subscription(
+            TransformStamped,
+            '/tf',
+            self.listen_tf,
+            10
+        )
+
+
+    def listen_tf(self):
+        try:
+            transform1 = self.tf_buffer.lookup_transform('base_link', 'leg_link', rclpy.time.Time())
+            transform2 = self.tf_buffer.lookup_transform('leg_link', 'arm_link', rclpy.time.Time())
+            transform3 = self.tf_buffer.lookup_transform('arm_link', 'end_effector', rclpy.time.Time())
+            self.get_logger().info(f'Transform received from base link to leg link: {transform1}')
+            self.get_logger().info(f'Transform received from leg link to arm link: {transform2}')
+            self.get_logger().info(f'Transform received from arm link to end effector: {transform3}')
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as e:
+            self.get_logger().warn(f'Failed to lookup transform: {e}')
+
     def get_cost(self, config1, config2):
         return np.linalg.norm(config1 - config2)
     
@@ -122,7 +158,7 @@ class RobotController(Node):
             result = 0
 
             for i in range(n):
-                result += diff(expr, q[i]) * q_dot[i]
+                result += self.diff(expr, q[i]) * q_dot[i]
 
             return result
 
@@ -320,20 +356,48 @@ class RobotController(Node):
 
         #!/usr/bin/env python
  
-    def apply_torque(self, joint_name, torque):
+    def apply_torque(self, joint_name, torque, position):
         msg = JointTrajectory()
         msg.joint_names = [joint_name]
         point = JointTrajectoryPoint()
-        point.positions = [0.0]  # Set the joint position if required
-        point.velocities = [0.0]  # Set the joint velocity if required
+        point.positions = [position]  # Set the joint position if required
+        v =  np.gradient(position, dt=0.01, axis=0, edge_order=2)
+        point.velocities = [v]  # Set the joint velocity if required
         point.effort = [torque]
         msg.points = [point]
-        self.publisher.publish(msg)
+        self.joint_trajectory_publisher.publish(msg)
 
-    def control_script(self, joints, tau):
+        effort = ApplyJointEffort.Request()
+        effort.joint_name = joint_name
+        effort.effort = torque
+        effort.start_time.sec = 0
+        effort.start_time.nanosec = 0
+        effort.duration.sec = 0
+        effort.duration.nanosec = int(1e8)  # Duration of 0.1 seconds
+        future = self.joint_effort_srv_client.call_async(effort)
+
+        # Wait for the result
+        rclpy.spin_until_future_complete(self, future)
+        # Check if the request was successful
+        if future.result() is not None:
+            self.get_logger().info("Effort applied successfully")
+        else:
+            self.get_logger().error("Failed to apply effort")
+        
+        joint_state_msg = JointState()
+        joint_state_msg.header.stamp = self.get_clock().now().to_msg()
+        joint_state_msg.name = [joint_name]  # Add your joint names
+        joint_state_msg.position = [position]  # Add your joint positions
+
+        # Publish joint state information
+        self.joint_state_publisher.publish(joint_state_msg)
+
+    def control_script(self, joints, tau, graph):
        # Specify joint name (replace 'joint1' with your joint name)
-        for i in range(4):
-            self.apply_torque(joints[i], tau[i])
+        #for i in range(4):
+        for node in graph:
+            for i, pos in enumerate(node):
+                self.apply_torque(joints[i], tau[i], pos)
 
     def solve_numerical_inverse_kinematics(self, q_initial, target_position):
         q_result = q_initial.copy()
@@ -352,21 +416,28 @@ class RobotController(Node):
 
 def main():
     rclpy.init()
-    node = RobotController()
-    q_goal = node.solve_numerical_inverse_kinematics(np.array([0, 0, 0, 0], np.array([1,2,1])))
-    graph = node.get_trajectory(q_goal, np.array([0, 0, 0, 0]), np.array([0, 0, 0, 0]))
-    tau = node.compute_motion(np.array([1,2,1]), graph)
-    joints = np.array(['base_joint', 'base_spherical_joint', 'leg_joint', 'arm_joint'])
-    node.control_script(tau, joints)
+    try:
+        while rclpy.ok():
+            node = RobotController()
+            q_goal = node.solve_numerical_inverse_kinematics(np.array([0, 0, 0, 0], np.array([1,2,1])))
+            graph = node.get_trajectory(q_goal, np.array([0, 0, 0, 0]), np.array([0, 0, 0, 0]))
+            tau = node.compute_motion(np.array([1,2,1]), graph)
+            joints = np.array(['base_joint', 'base_spherical_joint', 'leg_joint', 'arm_joint'])
+            node.control_script(joints, tau, graph)
 
-    # Calculate end-effector position
-    #end_effector_position = robot.forward_kinematics(joint_angles_values)[:3, 3]
- 
+            # Calculate end-effector position
+            #end_effector_position = robot.forward_kinematics(joint_angles_values)[:3, 3]
+        
 
-    # Calculate end-effector velocity
-    #jacobian_matrix = robot.direct_differential_kinematics(joint_angles_values)
-    rclpy.spin(node)
-    rclpy.shutdown()
+            # Calculate end-effector velocity
+            #jacobian_matrix = robot.direct_differential_kinematics(joint_angles_values)
+
+            rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == '__main__':

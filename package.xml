@@ -7,6 +7,12 @@
   <maintainer email="vboxuser@todo.todo">vboxuser</maintainer>
   <license>Apache License 2.0</license>
 
+  <build_depend>control_msgs</build_depend>
+  <exec_depend>control_msgs</exec_depend>
+  <build_depend>gazebo_msgs</build_depend>
+  <exec_depend>gazebo_msgs</exec_depend>
+  <build_depend>sensor_msgs</build_depend>
+  <exec_depend>sensor_msgs</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

@@ -1,12 +1,13 @@
 from launch import LaunchDescription
-from launch.actions import SetEnvironmentVariable, DeclareLaunchArgument, ExecuteProcess
-from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration, TextSubstitution
+from launch.actions import SetEnvironmentVariable, DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.actions import IncludeLaunchDescription
 from pathlib import Path
 from ament_index_python.packages import get_package_share_directory
-import sys
-from intro_robot.giraff_robot import FramePublisher
+import os
+
 
 def generate_launch_description():
 
@@ -18,12 +19,15 @@ def generate_launch_description():
     urdf_file = Path(get_package_share_directory('intro_robot'), 'urdf', 'giraff_robot.urdf').resolve()
     assert urdf_file.is_file()
 
-    #tf_publisher = Path(get_package_share_directory('intro_robot'), 'src', 'giraff_robot.py').resolve()
-    #assert tf_publisher.is_file()
-
-
+    world_path = Path(get_package_share_directory('intro_robot'), 'worlds', 'world.world').resolve()
+    assert world_path.is_file()
 
     # Declare launch arguments
+    world_ = DeclareLaunchArgument(
+        'use_world',
+        description='Which world to use for Gazebo',
+        default_value=str(world_path),
+    )
 
 
     urdf = DeclareLaunchArgument(
@@ -38,21 +42,34 @@ def generate_launch_description():
         description='Use simulation (Gazebo) clock if true',
     )
 
-    #tf_publisher_arg = DeclareLaunchArgument(
-    #    'use_tf_publisher',
-    #     default_value='giraff_robot.py',
-    #     description='Use simulation (Gazebo) clock if true',
-    #)
+
+    gazebo_node = Node(
+        package='gazebo_ros',
+        executable='spawn_entity.py',
+        name='spawn_entity',
+        arguments=[
+            '-topic', 'robot_description',
+            '-d', str(world_),
+      ])
 
 
     state_publisher_node = Node(
-         package='robot_state_publisher',
-         executable='robot_state_publisher',
-         name='robot_state_publisher',
-         output='screen',
-         parameters=[{'use_sim_time': use_sim_time},
-                     {'robot_description': LaunchConfiguration('use_urdf')}],
-     )
+        package='robot_state_publisher',
+        executable='robot_state_publisher',
+        name='robot_state_publisher',
+        output='screen',
+        parameters=[{'use_sim_time': use_sim_time},
+                    {'robot_description': LaunchConfiguration('use_urdf')}],
+    )
+
+    robot_controller_node = Node(
+        package='intro_robot',
+        executable='robot_controller',
+        name='robot_controller',
+        output='screen',
+        emulate_tty=True,  # Keeps color in the terminal
+    )
+
 
     # RViz2 node
     rviz_node = Node(
@@ -69,17 +86,25 @@ def generate_launch_description():
         executable='giraff_robot',  # Replace with the name of your node executable
         name='giraff_robot',
         output='screen',
-        #arguments=['-d', str(tf_publisher)],
 	parameters=[{'robot_description' : LaunchConfiguration('use_urdf')}],
 
     )
 
     return LaunchDescription([
        	urdf,
+        world_,
         sim_time,
-	#tf_publisher_arg,
-        #state_publisher_node,
+        gazebo_node,
+        state_publisher_node,
+        robot_controller_node,
         rviz_node,
         tf_publishing_node,
+        # Used to launch gazebo with the world file
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource([os.path.join(
+                get_package_share_directory('gazebo_ros'), 'launch'), 
+                '/gazebo.launch.py']),
+            launch_arguments={'world': world_}.items()
+        ),
         SetEnvironmentVariable('QT_QPA_PLATFORM', 'wayland'),
     ])

@@ -48,19 +48,11 @@ def generate_launch_description():
         executable='spawn_entity.py',
         name='spawn_entity',
         arguments=[
-            '-topic', 'robot_description',
-            '-d', str(world_),
+            '-entity', 'giraff_robot',
+            '-file', str(urdf_file),
       ])
 
 
-    state_publisher_node = Node(
-        package='robot_state_publisher',
-        executable='robot_state_publisher',
-        name='robot_state_publisher',
-        output='screen',
-        parameters=[{'use_sim_time': use_sim_time},
-                    {'robot_description': LaunchConfiguration('use_urdf')}],
-    )
 
     robot_controller_node = Node(
         package='intro_robot',
@@ -95,7 +87,6 @@ def generate_launch_description():
         world_,
         sim_time,
         gazebo_node,
-        state_publisher_node,
         robot_controller_node,
         rviz_node,
         tf_publishing_node,
@@ -104,7 +95,9 @@ def generate_launch_description():
             PythonLaunchDescriptionSource([os.path.join(
                 get_package_share_directory('gazebo_ros'), 'launch'), 
                 '/gazebo.launch.py']),
-            launch_arguments={'world': world_}.items()
+                launch_arguments=[
+                ('world', LaunchConfiguration('use_world')),
+            ],
         ),
         SetEnvironmentVariable('QT_QPA_PLATFORM', 'wayland'),
     ])

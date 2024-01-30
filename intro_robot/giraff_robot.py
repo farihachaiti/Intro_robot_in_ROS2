@@ -5,7 +5,9 @@ import tf2_geometry_msgs  # This import is necessary for using transform_datatyp
 import math
 import numpy as np
 from rclpy.node import Node
-import tf
+from sensor_msgs.msg import JointState
+from intro_robot.robot_controller import RobotController
+from urdf_parser_py.urdf import URDF
 
 class FramePublisher():
 
@@ -14,7 +16,39 @@ class FramePublisher():
         self.tf_broadcaster = tf2_ros.StaticTransformBroadcaster(self.node)
         self.publish_rate = 10
         self.rate = self.node.create_rate(self.publish_rate)
+        self.joint_state_publisher = self.create_publisher(JointState, '/joint_states', 10)
 
+        self.create_subscription(
+            JointState,
+            'joint_states',
+            self.joint_state_callback,
+            10  # QoS profile depth
+        )
+
+    def joint_state_callback(self, updated_msg, joint_name=None, position=None):
+        # Process joint state message
+        joint_state_msg = JointState()
+        if updated_msg:
+            print("Received Joint State:")
+            print("Header: ", updated_msg.header)
+            print("Joint Names: ", updated_msg.name)
+            print("Joint Positions: ", updated_msg.position)            
+            joint_state_msg.header = updated_msg.header
+            joint_state_msg.name = [updated_msg.name]  # Add your joint names
+            joint_state_msg.position = [updated_msg.position]  # Add your joint positions
+        else:
+            print("Received Joint State:")
+            print("Header: ", self.get_clock().now().to_msg())
+            print("Joint Names: ", joint_name)
+            print("Joint Positions: ", position) 
+            joint_state_msg.header.stamp = self.get_clock().now().to_msg()
+            joint_state_msg.name = [joint_name]  # Add your joint names
+            joint_state_msg.position = [position]  # Add your joint positions
+
+        # Publish joint state information
+        self.joint_state_publisher.publish(joint_state_msg)
+
+        self.update_tf(joint_state_msg.position, joint_state_msg.name)
 
     def quaternion_from_euler(self, ai, aj, ak):
         ai /= 2.0
@@ -39,6 +73,37 @@ class FramePublisher():
         q[3] = cj*cc + sj*ss
 
         return q
+    
+
+
+
+    def update_tf(self, position, joint_name):
+        J = RobotController.compute_forward_kinematics_from_configuration(position)
+
+        x = J[1,:3]
+        y = J[2,:3]
+        z = J[3,:3]
+        # Extract the rotational part of the Jacobian
+        rotational_jacobian = J[3:, :]
+        joint_velocities = np.gradient(position, dt=0.01, axis=0, edge_order=2)
+        # Calculate the angular velocities (roll, pitch, yaw rates)
+        orientation_rates = np.dot(rotational_jacobian, joint_velocities)
+        roll = orientation_rates[0]
+        pitch = orientation_rates[1]
+        yaw = orientation_rates[2]
+        self.robot_description = self.get_parameter('robot_description').get_parameter_value().string_value
+                # Parse the URDF
+        try:
+            self.robot = URDF.from_xml_string(self.robot_description)
+        except Exception as e:
+            self.get_logger().error(f"Error parsing URDF: {e}")
+            self.robot = None
+        for joint in self.robot.joints:
+            if joint.name == joint_name:
+                frame = joint.child
+                parent_frame = joint.parent
+                return joint.parent, joint.child
+        self.publish_tf(x, y, z, roll, pitch, yaw, frame, parent_frame)
 
 
     def publish_tf(self, x, y, z, roll, pitch, yaw, frame, parent_frame):
@@ -49,6 +114,8 @@ class FramePublisher():
         t.transform.translation.x = x
         t.transform.translation.y = y
         t.transform.translation.z = z
+
+        self.publish_joint_states(frame, x)
 
         q = self.quaternion_from_euler(roll, pitch, yaw)
         t.transform.rotation.x = q[0]

@@ -8,11 +8,9 @@
     </material>
 
 
-    <world name="world">
-	 <origin rpy="0 0 0" xyz="0 0 0"/>
-    </world>
-
-
+    <link name="world">
+	    <origin rpy="0 0 0" xyz="0 0 0"/>
+    </link>
     <link name="base_link">
         <visual> 
             <geometry>
@@ -127,7 +125,7 @@
         </visual> 
     </joint>
     <joint name="base_spherical_joint" type="revolute">
-        <parent name="base_link"/>
+        <parent link="base_link"/>
         <child link="leg_link"/>
         <origin xyz="0 0 0" rpy="0 0 0"/>
         <axis xyz="0 0 1" />

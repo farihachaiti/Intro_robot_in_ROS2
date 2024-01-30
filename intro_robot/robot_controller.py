@@ -8,7 +8,6 @@ from control_msgs.msg import JointTrajectoryControllerState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from gazebo_msgs.srv import ApplyJointEffort
 from sensor_msgs.msg import JointState
-from geometry_msgs.msg import TransformStamped
 import tf2_ros
 
 
@@ -20,20 +19,12 @@ class RobotController(Node):
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.joint_trajectory_publisher = self.create_publisher(JointTrajectory, '/joint_trajectory', 10)
         self.joint_state_publisher = self.create_publisher(JointState, '/joint_states', 10)
-        self.joint_effort_srv_client= self.create_client(ApplyJointEffort, '/gazebo_msgs/apply_joint_effort')
+        self.joint_effort_srv_client= self.create_client(ApplyJointEffort, '/gazebo_ros/apply_joint_effort')
     
 
             # Wait for the service to be available
-        while not self.joint_effort_srv_client.wait_for_service(timeout_sec=1.0):
+        while not self.joint_effort_srv_client.wait_for_service(timeout_sec=5.0):
             self.get_logger().info('Service not available, waiting...')
-
-                # Subscribe to TF data
-        self.create_subscription(
-            TransformStamped,
-            '/tf',
-            self.listen_tf,
-            10
-        )
 
 
     def listen_tf(self):
@@ -362,10 +353,20 @@ class RobotController(Node):
         point = JointTrajectoryPoint()
         point.positions = [position]  # Set the joint position if required
         v =  np.gradient(position, dt=0.01, axis=0, edge_order=2)
+        a =  np.gradient(v, dt=0.01, axis=0, edge_order=2)
         point.velocities = [v]  # Set the joint velocity if required
+        point.accelerations = [a]
         point.effort = [torque]
         msg.points = [point]
         self.joint_trajectory_publisher.publish(msg)
+
+        joint_state_msg = JointState()
+        joint_state_msg.header.stamp = self.get_clock().now().to_msg()
+        joint_state_msg.name = [joint_name]  # Add your joint names
+        joint_state_msg.position = [position]  # Add your joint positions
+
+        # Publish joint state information
+        self.joint_state_publisher.publish(joint_state_msg)
 
         effort = ApplyJointEffort.Request()
         effort.joint_name = joint_name
@@ -373,7 +374,7 @@ class RobotController(Node):
         effort.start_time.sec = 0
         effort.start_time.nanosec = 0
         effort.duration.sec = 0
-        effort.duration.nanosec = int(1e8)  # Duration of 0.1 seconds
+        effort.duration.nanosec = int(1e-8)  # Duration of 0.1 seconds
         future = self.joint_effort_srv_client.call_async(effort)
 
         # Wait for the result
@@ -384,13 +385,6 @@ class RobotController(Node):
         else:
             self.get_logger().error("Failed to apply effort")
         
-        joint_state_msg = JointState()
-        joint_state_msg.header.stamp = self.get_clock().now().to_msg()
-        joint_state_msg.name = [joint_name]  # Add your joint names
-        joint_state_msg.position = [position]  # Add your joint positions
-
-        # Publish joint state information
-        self.joint_state_publisher.publish(joint_state_msg)
 
     def control_script(self, joints, tau, graph):
        # Specify joint name (replace 'joint1' with your joint name)
@@ -406,7 +400,7 @@ class RobotController(Node):
             J = self.compute_direct_differential_kinematics_from_configuration(q_initial)
             delta_theta = np.linalg.pinv(J) @ (target_position - self.compute_forward_kinematics_from_configuration(q_initial))
             q_result += delta_theta
-
+            q_initial = q_result
             if np.linalg.norm(delta_theta) < 1e-6:
                 break
 
@@ -416,9 +410,9 @@ class RobotController(Node):
 
 def main():
     rclpy.init()
+    node = RobotController()
     try:
         while rclpy.ok():
-            node = RobotController()
             q_goal = node.solve_numerical_inverse_kinematics(np.array([0, 0, 0, 0], np.array([1,2,1])))
             graph = node.get_trajectory(q_goal, np.array([0, 0, 0, 0]), np.array([0, 0, 0, 0]))
             tau = node.compute_motion(np.array([1,2,1]), graph)

@@ -16,9 +16,9 @@ class FramePublisher():
         self.tf_broadcaster = tf2_ros.StaticTransformBroadcaster(self.node)
         self.publish_rate = 10
         self.rate = self.node.create_rate(self.publish_rate)
-        self.joint_state_publisher = self.create_publisher(JointState, '/joint_states', 10)
+        self.joint_state_publisher = self.node.create_publisher(JointState, '/joint_states', 10)
 
-        self.create_subscription(
+        self.node.create_subscription(
             JointState,
             'joint_states',
             self.joint_state_callback,
@@ -94,11 +94,11 @@ class FramePublisher():
         self.robot_description = self.get_parameter('robot_description').get_parameter_value().string_value
                 # Parse the URDF
         try:
-            self.robot = URDF.from_xml_string(self.robot_description)
+            self.robot_desc = URDF.from_xml_string(self.robot_description)
         except Exception as e:
             self.get_logger().error(f"Error parsing URDF: {e}")
-            self.robot = None
-        for joint in self.robot.joints:
+            self.robot_desc = None
+        for joint in self.robot_desc.joints:
             if joint.name == joint_name:
                 frame = joint.child
                 parent_frame = joint.parent
@@ -114,8 +114,6 @@ class FramePublisher():
         t.transform.translation.x = x
         t.transform.translation.y = y
         t.transform.translation.z = z
-
-        self.publish_joint_states(frame, x)
 
         q = self.quaternion_from_euler(roll, pitch, yaw)
         t.transform.rotation.x = q[0]

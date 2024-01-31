@@ -19,7 +19,7 @@ class RobotController(Node):
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.joint_trajectory_publisher = self.create_publisher(JointTrajectory, '/joint_trajectory', 10)
         self.joint_state_publisher = self.create_publisher(JointState, '/joint_states', 10)
-        self.joint_effort_srv_client= self.create_client(ApplyJointEffort, '/gazebo_ros/apply_joint_effort')
+        self.joint_effort_srv_client= self.create_client(ApplyJointEffort, '/apply_joint_effort')
     
 
             # Wait for the service to be available
@@ -46,7 +46,7 @@ class RobotController(Node):
         min_distance = float('inf')
 
         for node in graph:
-            distance = self.get_cost(node, new_node)
+            distance = self.get_cost(new_node, node)
             if distance < min_distance:
                 min_distance = distance
                 nearest = node
@@ -80,16 +80,19 @@ class RobotController(Node):
 
         return new_node
     
-    def rewire(self, graph, q_new, goal_cost):
+    
+    def rewire(self, graph, q_new, q_new_cost, q_goal, goal_cost):
         for node in graph:
             if node == q_new or self.get_cost(q_new, node) > goal_cost:
                 continue
 
-            tentative_cost = q_new.cost + self.get_cost(q_new, node)
-            if tentative_cost < node.cost:
+            tentative_cost = q_new_cost + self.get_cost(node, q_new)
+            node_cost = self.get_cost(q_goal, node)
+            if tentative_cost < node_cost:
                 # Update parent if the new connection is more efficient
-                node.parent = q_new
-                node.cost = tentative_cost
+                node_parent = q_new
+                node_cost = tentative_cost
+        return node_parent
          
 
     def get_trajectory(self, q_goal, q_init, q_parent):
@@ -101,140 +104,111 @@ class RobotController(Node):
                 q_new = self.extend(q_nearest, q_random)
                 q_parent = q_nearest
                 near_nodes = [node for node in graph if self.get_cost(q_new, node) < self.get_cost(q_goal,q_parent)]
-
+                min_cost = self.get_cost(q_goal,q_parent)
                 for near_node in near_nodes:
                     if self.get_cost(q_goal, near_node) + self.get_cost(q_new, near_node) < min_cost and self.is_clear(near_node):
                         min_cost_node = near_node
-                        min_cost = self.get_cost(q_goal, q_nearest) + self.get_cost(q_new, q_nearest)
+                        min_cost = self.get_cost(q_goal, near_node) + self.get_cost(q_new, near_node)
+                        q_parent = self.rewire(graph, min_cost_node, min_cost, q_new, self.get_cost(q_goal, q_new))
                 q_init = q_new
-                q_parent = min_cost_node
                 graph.append(q_new)
-                self.rewire(graph, q_new, self.get_cost(q_goal,q_parent))
-
+                
         return graph
 
 
-    def compute_inertia_matrix(self, Ixx, Iyy, Izz, T, m):
-            I0_local = sp.diag(Ixx[0], Iyy[0], Izz[0])
-            I1_local = sp.diag(Ixx[1], Iyy[1], Izz[1])
-            I2_local = sp.diag(Ixx[2], Iyy[2], Izz[2])
-            I3_local = sp.diag(Ixx[3], Iyy[3], Izz[3])
-            I4_local = sp.diag(Ixx[4], Iyy[4], Izz[4])
+    def compute_inertia_matrix(self):
+        M = np.zeros((5))
+        for k in range(5):
+            M[k]  = np.array([Ixx[k], -Ixy[k], -Ixz[k]],
+                             [-Ixy[k], Iyy[k], -Iyz[k]],
+                             [-Ixz[k], -Iyz[k], Izz[k]])
 
-            I0_base = T[:3, :3].T * I0_local * T[:3, :3]
-            I1_base = T[:3, :3].T * I1_local * T[:3, :3]
-            I2_base = T[:3, :3].T * I2_local * T[:3, :3]
-            I3_base = T[:3, :3].T * I3_local * T[:3, :3]
-            I4_base = T[:3, :3].T * I4_local * T[:3, :3]
-
-            # Compute the inertia matrix M symbolically
-            M = m[0] * I0_base + m[1] * I1_base + m[2] * I2_base + m[3] * I3_base + m[4] * I4_base
-
-            # Simplify the result
-            return sp.simplify(M)
+        return sp.simplify(M)
             
 
-    def compute_coriolis_matrix(self, M, q, q_dot):
-            n = len(q)
-            C = np.zeros((n, n))
+    def compute_coriolis_matrix(self, M, q, qd):
+        n = len(q)
+        C = np.zeros((5))
+        for k in range(n):
+            C[k] = np.zeros((5))
+            for i in range(len(M)):
+                for j in range(len(M[i])):
+                    C[k][i,j] = (0.5 * (sp.diff(M[k][i,j], q[k]) + sp.diff(M[k][i,j], q[k]) - sp.diff(M[k][j,i], q[k]))) * qd[k]
 
-            for k in range(n):
-                for j in range(n):
-                    C[k, j] = 0.5 * (self.partial(M[k, j], q, q_dot) + self.partial(M[k, j], q, q_dot) - self.partial(M[j, k], q, q_dot))
-
-            return C
-
-    def partial(self, expr, q, q_dot):
-            n = len(q)
-            result = 0
-
-            for i in range(n):
-                result += self.diff(expr, q[i]) * q_dot[i]
-
-            return result
-
-    def diff(self, expr, var):
-            # Placeholder for symbolic differentiation (you might want to use a symbolic library for exact derivatives)
-            # This example assumes numerical differentiation for simplicity
-            h = 1e-6
-            expr_at_var_plus_h = expr.subs(var, var + h)
-            expr_at_var_minus_h = expr.subs(var, var - h)
-            return (expr_at_var_plus_h - expr_at_var_minus_h) / (2 * h)
+        return sp.simplify(C)
 
 
 
-    def inverse_dynamics(self, qdd_desired, qd_desired, q_desired, qd_current, q_current):
-            # Define symbolic variables
-            M  = self.compute_inertia_matrix()
-            C = self.compute_coriolis_matrix(M, q_current, qd_current)
-            G = 9.81
-            Kd = 0.5
-            Kp = 2.0
-            tau = np.dot(M, (qdd_desired + np.dot(Kd, (qd_desired - qd_current)) + np.dot(Kp, (q_desired - q_current)))) + np.dot(C, qd_current) + G
+    def inverse_dynamics(self, qdd_desired, qd_desired, q_desired, qd_current, q_current, T_total):
+        # Define symbolic variables
+        M  = self.compute_inertia_matrix()
+        C = self.compute_coriolis_matrix(M, q_current, qd_current)
+        G = 9.81
+        Kd = 0.5
+        Kp = 2.0
+        tau = np.dot(M, (qdd_desired + np.dot(Kd, (qd_desired - qd_current)) + np.dot(Kp, (q_desired - q_current)))) + np.dot(C, qd_current) + G
 
 
-            # Joint positions and velocities
-            #q = sp.Matrix([q1, q2])
-            #qdot = sp.Matrix([sp.diff(qi) for qi in q])
+        # Joint positions and velocities
+        #q = sp.Matrix([q1, q2])
+        #qdot = sp.Matrix([sp.diff(qi) for qi in q])
 
-            return tau
+        return tau
 
     def compute_forward_kinematics_from_configuration(self, q):
-            # Extract joint angles and prismatic displacements
-            theta1, theta2, d3, theta4 = q
-            
-            # Define robot parameters (replace these with the actual parameters of your robot)
-            L1 = 0.1
-            L2 = 0.6
-            L3 = 0.6
-            L4 = 0.6
+        # Extract joint angles and prismatic displacements
+        theta1, theta2, d3, theta4 = q
+        
+        # Define robot parameters (replace these with the actual parameters of your robot)
+        L1 = 0.1
+        L2 = 0.6
+        L3 = 0.6
+        L4 = 0.6
 
-            T01 =  np.array([
-            [1, 0, 0, 0],
-            [0, np.cos(theta1), -np.sin(theta1), 0],
-            [0, np.sin(theta1), np.cos(theta1), L1],
-            [0, 0, 0, 1]
-        ])
-            
-            T12 =  np.array([
-            [1, 0, 0, 0],
-            [0, np.cos(theta2), -np.sin(theta2), 0],
-            [0, np.sin(theta2), np.cos(theta2), L2],
-            [0, 0, 0, 1]
-        ])
-           
-            T23 =  np.array([
-            [1, 0, 0, 0],
-            [0, 1, 0, 0],
-            [0, 0, 1, d3+L3],
-            [0, 0, 0, 1]
-        ])
-            
+        T01 =  np.array([
+        [1, 0, 0, 0],
+        [0, np.cos(theta1), -np.sin(theta1), 0],
+        [0, np.sin(theta1), np.cos(theta1), L1],
+        [0, 0, 0, 1]
+    ])
+        
+        T12 =  np.array([
+        [1, 0, 0, 0],
+        [0, np.cos(theta2), -np.sin(theta2), 0],
+        [0, np.sin(theta2), np.cos(theta2), L2],
+        [0, 0, 0, 1]
+    ])
+        
+        T23 =  np.array([
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, d3+L3],
+        [0, 0, 0, 1]
+    ])
+        
 
-            T34 =  np.array([
-            [1, 0, 0, -L4],
-            [0, np.cos(theta4), -np.sin(theta4), 0],
-            [0, np.sin(theta4), np.cos(theta4), 0],
-            [0, 0, 0, 1]
-        ])
- 
-            T4ee =  np.array([
-            [np.cos(np.radians(30)), 0, -np.sin(np.radians(30)), 0],
-            [0, 1, 0, 0],
-            [np.sin(np.radians(30)), 0, np.cos(np.radians(30)), 0],
-            [0, 0, 0, 1]
-        ])
-            T_total = T01 @ T12 @ T23 @ T34 @ T4ee
+        T34 =  np.array([
+        [1, 0, 0, -L4],
+        [0, np.cos(theta4), -np.sin(theta4), 0],
+        [0, np.sin(theta4), np.cos(theta4), 0],
+        [0, 0, 0, 1]
+    ])
 
-            x = T_total[0, 3]
-            y = T_total[1, 3]
-            z = T_total[2, 3]
-            # Forward kinematics equations
-            #x = L1 * np.cos(theta1) + L3 * np.cos(theta1 + theta3) + L4 * np.cos(theta1 + theta3 + theta4)
-            #y = L1 * np.sin(theta1) + L3 * np.sin(theta1 + theta3) + L4 * np.sin(theta1 + theta3 + theta4)
-            #z = d2 + L2 + L5
-            
-            return np.array([x, y, z])
+        T4ee =  np.array([
+        [np.cos(np.radians(30)), 0, -np.sin(np.radians(30)), 0],
+        [0, 1, 0, 0],
+        [np.sin(np.radians(30)), 0, np.cos(np.radians(30)), 0],
+        [0, 0, 0, 1]
+    ])
+        T_total = T01 @ T12 @ T23 @ T34 @ T4ee
+
+
+        # Forward kinematics equations
+        #x = L1 * np.cos(theta1) + L3 * np.cos(theta1 + theta3) + L4 * np.cos(theta1 + theta3 + theta4)
+        #y = L1 * np.sin(theta1) + L3 * np.sin(theta1 + theta3) + L4 * np.sin(theta1 + theta3 + theta4)
+        #z = d2 + L2 + L5
+        
+        return T_total
     
 
     def compute_direct_differential_kinematics_from_configuration(self, q):
@@ -292,7 +266,16 @@ class RobotController(Node):
         P04 = T04[:, 3]
         P0ee = T0ee[:, 3]
 
-        Z1 = Z2 = Z4 = np.array([1, 0, 0])
+        '''
+        Z1 = base_joint (revolute)
+        Z2 = base_spherical_joint (revolute)
+        Z4 = arm_joint (revolute)
+        Z5 = end_effector_joint (revolute)
+        Z3 = leg_joint (prismatic)
+        d3 = displacement across links of Z3
+        Z3 = holding tool_mic link containing the microphone
+        '''
+        Z1 = Z2 = Z4 = np.array([1, 0, 0]) 
         Z3 = d3
         Z5 = np.array([0, 1, 0])
         J1 = Z1 @ (P0ee - P01)
@@ -321,8 +304,11 @@ class RobotController(Node):
 
         # Numerical inverse kinematics using the Jacobian inverse method
         for q_current in graph:
-            p_current = self.compute_forward_kinematics_from_configuration(q_current)
-            error = p_desired - p_current
+            T_total = self.compute_forward_kinematics_from_configuration(q_current)
+            x = T_total[0, 3]
+            y = T_total[1, 3]
+            z = T_total[2, 3]
+            error = p_desired - np.array([x, y, z])
 
             # Check if the error is below the tolerance
             if np.linalg.norm(error) < tolerance:
@@ -339,10 +325,10 @@ class RobotController(Node):
             q_dot = np.gradient(q_current, dt=0.01, axis=0, edge_order=2)
 
             # Update joint positions using the computed velocities
-            q_current += q_dot
+            q_current += q_dot * 0.01
         
         # Print the result
-            tau.append(self.inverse_dynamics(q_ddot_desired, q_dot_desired, q_desired, q_dot, q_current))
+            tau.append(self.inverse_dynamics(q_ddot_desired, q_dot_desired, q_desired, q_dot, q_current, T_total))
         return tau
 
         #!/usr/bin/env python
@@ -413,7 +399,7 @@ def main():
     node = RobotController()
     try:
         while rclpy.ok():
-            q_goal = node.solve_numerical_inverse_kinematics(np.array([0, 0, 0, 0], np.array([1,2,1])))
+            q_goal = node.solve_numerical_inverse_kinematics(np.array([0, 0, 0, 0]), np.array([1,2,1]))
             graph = node.get_trajectory(q_goal, np.array([0, 0, 0, 0]), np.array([0, 0, 0, 0]))
             tau = node.compute_motion(np.array([1,2,1]), graph)
             joints = np.array(['base_joint', 'base_spherical_joint', 'leg_joint', 'arm_joint'])

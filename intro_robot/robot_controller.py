@@ -9,6 +9,7 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from gazebo_msgs.srv import ApplyJointEffort
 from sensor_msgs.msg import JointState
 import tf2_ros
+from urdf_parser_py.urdf import URDF
 
 
 class RobotController(Node):
@@ -39,98 +40,116 @@ class RobotController(Node):
             self.get_logger().warn(f'Failed to lookup transform: {e}')
 
     def get_cost(self, config1, config2):
-        return np.linalg.norm(config1 - config2)
-    
+        return np.linalg.norm(np.array(config1) - np.array(config2)).astype(int)
+
     def nearest(self, graph, new_node):
         nearest = None
-        min_distance = float('inf')
+        min_distance = 100
 
         for node in graph:
             distance = self.get_cost(new_node, node)
-            if distance < min_distance:
+            
+            if (distance <= min_distance) and distance!=0:
                 min_distance = distance
                 nearest = node
-
+        
         return nearest
 
 
-    def extend(self, q_nearest, q_random, step_size=0.1):
+    def extend(self, q_nearest, q_random, step_size=10):
         new_node = np.zeros(4)
 
         # Extend from the nearest node towards the sampled point
-        delta_x1 = q_random.x1 - q_nearest.x1
-        delta_x2 = q_random.x2 - q_nearest.x2
-        delta_x3 = q_random.x3 - q_nearest.x3
-        delta_x4 = q_random.x4 - q_nearest.x4
-        norm = np.linalg.norm([delta_x1, delta_x2, delta_x3, delta_x4])
+        delta_x1 = q_random[0] - q_nearest[0]
+        delta_x2 = q_random[1] - q_nearest[1]
+        delta_x3 = q_random[2] - q_nearest[2]
+        delta_x4 = q_random[3] - q_nearest[3]
+        #print(q_random[0] - q_nearest[0])
+        norm = np.linalg.norm(np.array([delta_x1, delta_x2, delta_x3, delta_x4]))
+    
         delta_x1 /= norm
         delta_x2 /= norm
         delta_x3 /= norm
         delta_x4 /= norm
-
-        new_x1 = q_nearest.x1 + step_size * delta_x1
-        new_x2 = q_nearest.x2 + step_size * delta_x2
-        new_x3 = q_nearest.x3 + step_size * delta_x3
-        new_x4 = q_nearest.x4 + step_size * delta_x4
-        new_node[0] = new_x1
-        new_node[1] = new_x2
-        new_node[2] = new_x3
-        new_node[3] = new_x4
-        #new_node.p = q_nearest
-
+        
+        if norm>step_size:  
+            
+            new_node[0] = (q_nearest[0] + (step_size * delta_x1)).astype(int)
+            new_node[1] = (q_nearest[1] + (step_size * delta_x2)).astype(int)
+            new_node[2] = (q_nearest[2] + (step_size * delta_x3)).astype(int)
+            new_node[3] = (q_nearest[3] + (step_size * delta_x4)).astype(int)    
+        else:
+            new_node = q_random
+        
+        
         return new_node
-    
-    
-    def rewire(self, graph, q_new, q_new_cost, q_goal, goal_cost):
-        for node in graph:
-            if node == q_new or self.get_cost(q_new, node) > goal_cost:
-                continue
 
-            tentative_cost = q_new_cost + self.get_cost(node, q_new)
-            node_cost = self.get_cost(q_goal, node)
-            if tentative_cost < node_cost:
-                # Update parent if the new connection is more efficient
-                node_parent = q_new
-                node_cost = tentative_cost
-        return node_parent
-         
 
-    def get_trajectory(self, q_goal, q_init, q_parent):
+    def rewire(self, near_nodes, idx, q_new):
+        near_nodes[idx] = q_new
+        
+
+    def is_clear(self, node, obstacles):
+        # Check if the path from 'start' to 'end' is clear
+        # The obstacles parameter is a list of Node objects representing obstacle positions
+
+        # Simple collision detection for illustration purposes
+        for obs in obstacles:
+            if (self.get_cost(node, obs)<=0) :
+                return False  # Collision detected
+
+        return True  # Path is clear
+
+    def get_trajectory(self, q_goal, q_init):
         graph = [q_init]
-        while self.get_cost(q_goal,q_init) < self.get_cost(q_goal,q_parent):
-            q_random = Node(np.random.uniform(0, 10), np.random.uniform(0, 10), np.random.uniform(0, 10), np.random.uniform(0, 10))
-            if self.is_clear(q_random):
-                q_nearest = self.nearest(graph, q_random)
+        while self.get_cost(q_goal, q_init)>0:
+            q_random = [np.random.randint(0, 3), np.random.randint(0, 3), np.random.randint(0, 3), np.random.randint(0, 3)]
+            if self.is_clear(q_random, graph):
+                q_nearest = self.nearest(graph, q_random) 
                 q_new = self.extend(q_nearest, q_random)
-                q_parent = q_nearest
-                near_nodes = [node for node in graph if self.get_cost(q_new, node) < self.get_cost(q_goal,q_parent)]
-                min_cost = self.get_cost(q_goal,q_parent)
-                for near_node in near_nodes:
-                    if self.get_cost(q_goal, near_node) + self.get_cost(q_new, near_node) < min_cost and self.is_clear(near_node):
-                        min_cost_node = near_node
-                        min_cost = self.get_cost(q_goal, near_node) + self.get_cost(q_new, near_node)
-                        q_parent = self.rewire(graph, min_cost_node, min_cost, q_new, self.get_cost(q_goal, q_new))
-                q_init = q_new
-                graph.append(q_new)
+                min_cost = self.get_cost(q_goal,q_nearest)
+        
+                near_nodes = [node for node in graph if (self.get_cost(q_new, node) <= min_cost)] 
+                for idx, near_node in enumerate(near_nodes):
+                    if self.is_clear(near_node, graph) and np.all(np.array(graph))!=0:                   
+                        if (self.get_cost(q_goal, near_node) + self.get_cost(q_new, near_node)) < min_cost:
+                            min_cost = self.get_cost(q_goal, near_node) + self.get_cost(q_new, near_node)
                 
+                graph.append(q_new)
+                for idx, near_node in enumerate(near_nodes):
+                    if self.is_clear(near_node, graph) and np.all(np.array(graph))!=0: 
+                        if (self.get_cost(q_goal, q_new) + self.get_cost(q_new, near_node))<self.get_cost(q_goal, near_node):
+                            self.rewire(near_nodes, idx, q_new)  
+            
+                q_init = q_new      
         return graph
+
 
 
     def compute_inertia_matrix(self):
         M = np.zeros((5))
-        for k in range(5):
-            M[k]  = np.array([Ixx[k], -Ixy[k], -Ixz[k]],
-                             [-Ixy[k], Iyy[k], -Iyz[k]],
-                             [-Ixz[k], -Iyz[k], Izz[k]])
+        self.robot_description = self.get_parameter('robot_description').get_parameter_value().string_value
+        # Parse the URDF
+        try:
+            self.robot_desc = URDF.from_xml_string(self.robot_description)
+        except Exception as e:
+            self.get_logger().error(f"Error parsing URDF: {e}")
+            self.robot_desc = None
+            for idx, link in enumerate(self.robot_desc.link_map.items()):
+                inertial = link.inertial
+                if inertial is not None and inertial.inertia is not None:
+                    M[idx]  = np.array([inertial.inertia.ixx[idx], -inertial.inertia.ixy[idx], -inertial.inertia.ixz[idx]],
+                        [-inertial.inertia.ixy[idx], inertial.inertia.iyy[idx], -inertial.inertia.iyz[idx]],
+                        [-inertial.inertia.ixz[idx], -inertial.inertia.iyz[idx], inertial.inertia.izz[idx]])
 
-        return sp.simplify(M)
+
+        return M
             
 
     def compute_coriolis_matrix(self, M, q, qd):
         n = len(q)
         C = np.zeros((5))
         for k in range(n):
-            C[k] = np.zeros((5))
             for i in range(len(M)):
                 for j in range(len(M[i])):
                     C[k][i,j] = (0.5 * (sp.diff(M[k][i,j], q[k]) + sp.diff(M[k][i,j], q[k]) - sp.diff(M[k][j,i], q[k]))) * qd[k]
@@ -156,50 +175,8 @@ class RobotController(Node):
         return tau
 
     def compute_forward_kinematics_from_configuration(self, q):
-        # Extract joint angles and prismatic displacements
-        theta1, theta2, d3, theta4 = q
-        
-        # Define robot parameters (replace these with the actual parameters of your robot)
-        L1 = 0.1
-        L2 = 0.6
-        L3 = 0.6
-        L4 = 0.6
 
-        T01 =  np.array([
-        [1, 0, 0, 0],
-        [0, np.cos(theta1), -np.sin(theta1), 0],
-        [0, np.sin(theta1), np.cos(theta1), L1],
-        [0, 0, 0, 1]
-    ])
-        
-        T12 =  np.array([
-        [1, 0, 0, 0],
-        [0, np.cos(theta2), -np.sin(theta2), 0],
-        [0, np.sin(theta2), np.cos(theta2), L2],
-        [0, 0, 0, 1]
-    ])
-        
-        T23 =  np.array([
-        [1, 0, 0, 0],
-        [0, 1, 0, 0],
-        [0, 0, 1, d3+L3],
-        [0, 0, 0, 1]
-    ])
-        
-
-        T34 =  np.array([
-        [1, 0, 0, -L4],
-        [0, np.cos(theta4), -np.sin(theta4), 0],
-        [0, np.sin(theta4), np.cos(theta4), 0],
-        [0, 0, 0, 1]
-    ])
-
-        T4ee =  np.array([
-        [np.cos(np.radians(30)), 0, -np.sin(np.radians(30)), 0],
-        [0, 1, 0, 0],
-        [np.sin(np.radians(30)), 0, np.cos(np.radians(30)), 0],
-        [0, 0, 0, 1]
-    ])
+        T01, T12, T23, T34, T4ee = self.compute_transform_matrix(q)
         T_total = T01 @ T12 @ T23 @ T34 @ T4ee
 
 
@@ -208,12 +185,14 @@ class RobotController(Node):
         #y = L1 * np.sin(theta1) + L3 * np.sin(theta1 + theta3) + L4 * np.sin(theta1 + theta3 + theta4)
         #z = d2 + L2 + L5
         
-        return T_total
+        return  np.array([T_total[0, 3], T_total[1, 3], T_total[2, 3]])
     
 
-    def compute_direct_differential_kinematics_from_configuration(self, q):
+    
+    def compute_transform_matrix(self, q):
+                    # Extract joint angles and prismatic displacements
         theta1, theta2, d3, theta4 = q
-           
+
         # Define robot parameters (replace these with the actual parameters of your robot)
         L1 = 0.1
         L2 = 0.6
@@ -225,46 +204,60 @@ class RobotController(Node):
         [0, np.cos(theta1), -np.sin(theta1), 0],
         [0, np.sin(theta1), np.cos(theta1), L1],
         [0, 0, 0, 1]
-    ])
-        
+        ])
+
         T12 =  np.array([
         [1, 0, 0, 0],
         [0, np.cos(theta2), -np.sin(theta2), 0],
         [0, np.sin(theta2), np.cos(theta2), L2],
         [0, 0, 0, 1]
-    ])
-        
+        ])
+
         T23 =  np.array([
         [1, 0, 0, 0],
         [0, 1, 0, 0],
         [0, 0, 1, d3+L3],
         [0, 0, 0, 1]
-    ])
-        
+        ])
+
 
         T34 =  np.array([
         [1, 0, 0, -L4],
         [0, np.cos(theta4), -np.sin(theta4), 0],
         [0, np.sin(theta4), np.cos(theta4), 0],
         [0, 0, 0, 1]
-    ])
+        ])
 
         T4ee =  np.array([
         [np.cos(np.radians(30)), 0, -np.sin(np.radians(30)), 0],
         [0, 1, 0, 0],
         [np.sin(np.radians(30)), 0, np.cos(np.radians(30)), 0],
         [0, 0, 0, 1]
-    ])
+        ])
+
+        return T01, T12, T23, T34, T4ee
+
+
+    def compute_direct_differential_kinematics_from_configuration(self, q):
+        theta1, theta2, d3, theta4 = q
+
+        T01, T12, T23, T34, T4ee = self.compute_transform_matrix(q)
+
         T02 = np.dot(T01, T12)
         T03 = np.dot(T02, T23)
         T04 = np.dot(T03, T34)
         T0ee = np.dot(T04, T4ee)
 
-        P01 = T01[:, 3]
-        P02 = T02[:, 3]
-        P03 = T03[:, 3]
-        P04 = T04[:, 3]
-        P0ee = T0ee[:, 3]
+        P01 = T01[:3, 3]
+        P02 = T02[:3, 3]
+        P03 = T03[:3, 3]
+        P04 = T04[:3, 3]
+        P0ee = T0ee[:3, 3]
+        P01 = P01.reshape(-1,1)
+        P02 = P02.reshape(-1,1)
+        P03 = P03.reshape(-1,1)
+        P04 = P04.reshape(-1,1)
+        P0ee = P0ee.reshape(-1,1)
 
         '''
         Z1 = base_joint (revolute)
@@ -275,17 +268,22 @@ class RobotController(Node):
         d3 = displacement across links of Z3
         Z3 = holding tool_mic link containing the microphone
         '''
-        Z1 = Z2 = Z4 = np.array([1, 0, 0]) 
-        Z3 = d3
-        Z5 = np.array([0, 1, 0])
-        J1 = Z1 @ (P0ee - P01)
-        J2 = Z2 @ (P0ee - P02)
-        J3 = np.array([Z3, 0])
-        J4 = Z4 @ (P0ee - P03)
-        J5 = Z5 @ (P0ee - P04)
-
-        J = np.array([J1, J2, J3, J4, J5])
-
+        Z1 = Z2 = Z4 = np.array([[1, 0, 0],
+                                [0, 0, 0],
+                                [0, 0, 0]]) 
+        Z3 = np.array([[0], [0], [d3]])
+        Z5 = np.array([[0, 0, 0],
+                      [0, 1, 0],
+                      [0, 0, 0]])
+        J1 = np.vstack((np.array(Z1 @ (P0ee - P01)), np.array([[1],[0],[0]])))
+        J2 = np.vstack((np.array(Z2 @ (P0ee - P02)), np.array([[1],[0],[0]])))
+        J3 = np.vstack((np.array(Z3), np.array([[0],[0],[0]])))
+        J4 = np.vstack((np.array(Z4 @ (P0ee - P03)), np.array([[1],[0],[0]])))
+        J5 = np.vstack((np.array(Z5 @ (P0ee - P04)), np.array([[0],[1],[0]])))
+    
+        
+        J = np.concatenate((J1, J2, J3, J4, J5), axis=1)
+       
         return J
 
     def compute_motion(self, p_desired, graph):
@@ -304,11 +302,9 @@ class RobotController(Node):
 
         # Numerical inverse kinematics using the Jacobian inverse method
         for q_current in graph:
-            T_total = self.compute_forward_kinematics_from_configuration(q_current)
-            x = T_total[0, 3]
-            y = T_total[1, 3]
-            z = T_total[2, 3]
-            error = p_desired - np.array([x, y, z])
+            p_current = self.compute_forward_kinematics_from_configuration(q_current)
+
+            error = p_desired - p_current
 
             # Check if the error is below the tolerance
             if np.linalg.norm(error) < tolerance:
@@ -384,12 +380,17 @@ class RobotController(Node):
 
         for iteration in range(100):
             J = self.compute_direct_differential_kinematics_from_configuration(q_initial)
-            delta_theta = np.linalg.pinv(J) @ (target_position - self.compute_forward_kinematics_from_configuration(q_initial))
+            error = (target_position - self.compute_forward_kinematics_from_configuration(q_initial)).reshape(-1, 1)
+            error = np.vstack((error, np.zeros_like(error)))
+            delta_theta = 0.1 * np.linalg.pinv(J) @ error
+            q_result = q_result.astype(float)
+            delta_theta = ((delta_theta[:4]).flatten()).T
             q_result += delta_theta
             q_initial = q_result
+            
             if np.linalg.norm(delta_theta) < 1e-6:
                 break
-
+        
         return q_result
 
 

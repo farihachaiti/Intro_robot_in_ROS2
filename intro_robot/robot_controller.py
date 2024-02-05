@@ -103,7 +103,7 @@ class RobotController(Node):
     def get_trajectory(self, q_goal, q_init):
         graph = [q_init]
         while self.get_cost(q_goal, q_init)>0:
-            q_random = [np.random.randint(0, 3), np.random.randint(0, 3), np.random.randint(0, 3), np.random.randint(0, 3)]
+            q_random = [np.random.randint(-217, -215), np.random.randint(151, 153), np.random.randint(0, 2), np.random.randint(55, 57)]
             if self.is_clear(q_random, graph):
                 q_nearest = self.nearest(graph, q_random) 
                 q_new = self.extend(q_nearest, q_random)
@@ -158,7 +158,7 @@ class RobotController(Node):
 
 
 
-    def inverse_dynamics(self, qdd_desired, qd_desired, q_desired, qd_current, q_current, T_total):
+    def inverse_dynamics(self, qdd_desired, qd_desired, q_desired, qd_current, q_current):
         # Define symbolic variables
         M  = self.compute_inertia_matrix()
         C = self.compute_coriolis_matrix(M, q_current, qd_current)
@@ -229,9 +229,9 @@ class RobotController(Node):
         ])
 
         T4ee =  np.array([
-        [np.cos(np.radians(30)), 0, -np.sin(np.radians(30)), 0],
+        [np.cos(np.radians(30)), 0, np.sin(np.radians(30)), 0],
         [0, 1, 0, 0],
-        [np.sin(np.radians(30)), 0, np.cos(np.radians(30)), 0],
+        [-np.sin(np.radians(30)), 0, np.cos(np.radians(30)), 0],
         [0, 0, 0, 1]
         ])
 
@@ -268,13 +268,19 @@ class RobotController(Node):
         d3 = displacement across links of Z3
         Z3 = holding tool_mic link containing the microphone
         '''
-        Z1 = Z2 = Z4 = np.array([[1, 0, 0],
-                                [0, 0, 0],
-                                [0, 0, 0]]) 
+        Z1 = np.array([[1, 0, 0],
+                       [0, np.cos(theta1), -np.sin(theta1)],
+                       [0, np.sin(theta1), np.cos(theta1),]]) 
+        Z2 = np.array([[1, 0, 0],
+                       [0, np.cos(theta2), -np.sin(theta2)],
+                       [0, np.sin(theta2), np.cos(theta2),]]) 
+        Z4 = np.array([[1, 0, 0],
+                       [0, np.cos(theta4), -np.sin(theta4)],
+                       [0, np.sin(theta4), np.cos(theta4),]]) 
         Z3 = np.array([[0], [0], [d3]])
-        Z5 = np.array([[0, 0, 0],
+        Z5 = np.array([[np.cos(np.radians(30)), 0, np.sin(np.radians(30))],
                       [0, 1, 0],
-                      [0, 0, 0]])
+                      [-np.sin(np.radians(30)), 0, np.cos(np.radians(30))]])
         J1 = np.vstack((np.array(Z1 @ (P0ee - P01)), np.array([[1],[0],[0]])))
         J2 = np.vstack((np.array(Z2 @ (P0ee - P02)), np.array([[1],[0],[0]])))
         J3 = np.vstack((np.array(Z3), np.array([[0],[0],[0]])))
@@ -295,36 +301,38 @@ class RobotController(Node):
         #q_current = np.array([0, 0, 0, 0])
 
         # Desired tolerance for convergence
-        tolerance = 1e-6
+        tolerance = 3
 
         # Maximum number of iterations
-        max_iterations = 100
 
         # Numerical inverse kinematics using the Jacobian inverse method
         for q_current in graph:
             p_current = self.compute_forward_kinematics_from_configuration(q_current)
 
-            error = p_desired - p_current
+            error = np.linalg.norm(np.array(p_desired) - np.array(p_current)).astype(int)
 
             # Check if the error is below the tolerance
             if np.linalg.norm(error) < tolerance:
                 print("Converged!")
                 q_desired = q_current
-                q_dot_desired = np.gradient(q_desired, dt=0.01, axis=0, edge_order=2)
-                q_ddot_desired = np.gradient(q_dot_desired, dt=0.01, axis=0, edge_order=2)
+                q_dot_desired = np.gradient(q_desired, 0.01)
+                q_ddot_desired = np.gradient(q_dot_desired, 0.01)
+                q_dot = np.gradient(q_current, 0.01)
+
+                # Update joint positions using the computed velocities
+                q_current += q_dot * 0.01
+
+                # Print the result
+                tau.append(self.inverse_dynamics(q_ddot_desired, q_dot_desired, q_desired, q_dot, q_current))
                 break
+            else:
+                print("Invalid joint configuration!")
+                continue
+        # Compute Jacobian matrix
+        #J = compute_jacobian(q_current)
 
-            # Compute Jacobian matrix
-            #J = compute_jacobian(q_current)
+        # Compute joint velocities using the Jacobian inverse
 
-            # Compute joint velocities using the Jacobian inverse
-            q_dot = np.gradient(q_current, dt=0.01, axis=0, edge_order=2)
-
-            # Update joint positions using the computed velocities
-            q_current += q_dot * 0.01
-        
-        # Print the result
-            tau.append(self.inverse_dynamics(q_ddot_desired, q_dot_desired, q_desired, q_dot, q_current, T_total))
         return tau
 
         #!/usr/bin/env python
@@ -334,8 +342,8 @@ class RobotController(Node):
         msg.joint_names = [joint_name]
         point = JointTrajectoryPoint()
         point.positions = [position]  # Set the joint position if required
-        v =  np.gradient(position, dt=0.01, axis=0, edge_order=2)
-        a =  np.gradient(v, dt=0.01, axis=0, edge_order=2)
+        v =  np.gradient(position, 0.01)
+        a =  np.gradient(v, 0.01)
         point.velocities = [v]  # Set the joint velocity if required
         point.accelerations = [a]
         point.effort = [torque]
@@ -391,7 +399,7 @@ class RobotController(Node):
             if np.linalg.norm(delta_theta) < 1e-6:
                 break
         
-        return q_result
+        return q_result.astype(int)
 
 
 

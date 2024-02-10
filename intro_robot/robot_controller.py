@@ -22,7 +22,13 @@ class RobotController(Node):
         self.joint_state_publisher = self.create_publisher(JointState, '/joint_states', 10)
         self.joint_effort_srv_client= self.create_client(ApplyJointEffort, '/apply_joint_effort')
     
-
+        self.robot_description = self.get_parameter('robot_description').get_parameter_value().string_value
+        # Parse the URDF
+        try:
+            self.robot_desc = URDF.from_xml_string(self.robot_description)
+        except Exception as e:
+            self.get_logger().error(f"Error parsing URDF: {e}")
+            self.robot_desc = None
             # Wait for the service to be available
         while not self.joint_effort_srv_client.wait_for_service(timeout_sec=5.0):
             self.get_logger().info('Service not available, waiting...')
@@ -72,8 +78,7 @@ class RobotController(Node):
         delta_x3 /= norm
         delta_x4 /= norm
         
-        if norm>step_size:  
-            
+        if norm>step_size:            
             new_node[0] = (q_nearest[0] + (step_size * delta_x1)).astype(int)
             new_node[1] = (q_nearest[1] + (step_size * delta_x2)).astype(int)
             new_node[2] = (q_nearest[2] + (step_size * delta_x3)).astype(int)
@@ -102,6 +107,8 @@ class RobotController(Node):
 
     def get_trajectory(self, q_goal, q_init):
         graph = [q_init]
+        
+            
         while self.get_cost(q_goal, q_init)>0:
             q_random = [np.random.randint(-217, -215), np.random.randint(151, 153), np.random.randint(0, 2), np.random.randint(55, 57)]
             if self.is_clear(q_random, graph):
@@ -120,14 +127,15 @@ class RobotController(Node):
                     if self.is_clear(near_node, graph) and np.all(np.array(graph))!=0: 
                         if (self.get_cost(q_goal, q_new) + self.get_cost(q_new, near_node))<self.get_cost(q_goal, near_node):
                             self.rewire(near_nodes, idx, q_new)  
-            
+
+
                 q_init = q_new      
         return graph
 
 
 
     def compute_inertia_matrix(self):
-        M = np.zeros((5))
+        M = np.zeros((5, 3, 3))
         self.robot_description = self.get_parameter('robot_description').get_parameter_value().string_value
         # Parse the URDF
         try:
@@ -138,9 +146,11 @@ class RobotController(Node):
             for idx, link in enumerate(self.robot_desc.link_map.items()):
                 inertial = link.inertial
                 if inertial is not None and inertial.inertia is not None:
-                    M[idx]  = np.array([inertial.inertia.ixx[idx], -inertial.inertia.ixy[idx], -inertial.inertia.ixz[idx]],
-                        [-inertial.inertia.ixy[idx], inertial.inertia.iyy[idx], -inertial.inertia.iyz[idx]],
-                        [-inertial.inertia.ixz[idx], -inertial.inertia.iyz[idx], inertial.inertia.izz[idx]])
+                    M[idx]  = np.array([inertial.inertia.ixx, -inertial.inertia.ixy, -inertial.inertia.ixz, 0, 0],
+                        [-inertial.inertia.ixy[idx], inertial.inertia.iyy[idx], -inertial.inertia.iyz, 0, 0],
+                        [-inertial.inertia.ixz, -inertial.inertia.iyz, inertial.inertia.izz, 0, 0],
+                        [0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0])
 
 
         return M
@@ -148,24 +158,33 @@ class RobotController(Node):
 
     def compute_coriolis_matrix(self, M, q, qd):
         n = len(q)
-        C = np.zeros((5))
+        C = np.zeros((n, n))
+        q_alt_symbols = {f'q{k}': sp.symbols(f'q{k}') for k in range(n)}
+        qd_alt_symbols = {f'qd{k}': sp.symbols(f'qd{k}') for k in range(n)}
         for k in range(n):
-            for i in range(len(M)):
-                for j in range(len(M[i])):
-                    C[k][i,j] = (0.5 * (sp.diff(M[k][i,j], q[k]) + sp.diff(M[k][i,j], q[k]) - sp.diff(M[k][j,i], q[k]))) * qd[k]
+            for i in range(n):
+                for j in range(n):
+                    if q[k] != 0.0 or qd[k] != 0.0:
+                        q_alt = q_alt_symbols[f'q{k}']
+                        qd_alt = qd_alt_symbols[f'qd{k}']
+ 
+                        C[i, j] += 0.5 * (sp.diff(M[k][i, j], q_alt) - sp.diff(M[k][j, i], q_alt)) * qd_alt
+                    else:
+                        # Handle the case where the joint position is zero
+                        # For example, set the derivative to zero or handle it based on your system's dynamics
+                        C[i, j] += 0.0  # Set derivative to zero
 
-        return sp.simplify(C)
+        return C
 
 
 
-    def inverse_dynamics(self, qdd_desired, qd_desired, q_desired, qd_current, q_current):
+    def inverse_dynamics(self, qdd_desired, qd_desired, q_desired, qd_current, q_current, Kp, Kd):
         # Define symbolic variables
         M  = self.compute_inertia_matrix()
         C = self.compute_coriolis_matrix(M, q_current, qd_current)
         G = 9.81
-        Kd = 0.5
-        Kp = 2.0
-        tau = np.dot(M, (qdd_desired + np.dot(Kd, (qd_desired - qd_current)) + np.dot(Kp, (q_desired - q_current)))) + np.dot(C, qd_current) + G
+        for i in range(4):
+            tau = np.dot(M[i], (qdd_desired[i] + np.dot(Kd, (qd_desired[i] - qd_current[i])) + np.dot(Kp, (q_desired[i] - q_current[i])))) + np.dot(C, qd_current[i]) + G
 
 
         # Joint positions and velocities
@@ -189,9 +208,10 @@ class RobotController(Node):
     
 
     
-    def compute_transform_matrix(self, q):
+    def compute_transform_matrix(self, q, theta5 = 30):
                     # Extract joint angles and prismatic displacements
         theta1, theta2, d3, theta4 = q
+        
 
         # Define robot parameters (replace these with the actual parameters of your robot)
         L1 = 0.1
@@ -229,16 +249,16 @@ class RobotController(Node):
         ])
 
         T4ee =  np.array([
-        [np.cos(np.radians(30)), 0, np.sin(np.radians(30)), 0],
+        [np.cos(np.radians(theta5)), 0, np.sin(np.radians(theta5)), 0],
         [0, 1, 0, 0],
-        [-np.sin(np.radians(30)), 0, np.cos(np.radians(30)), 0],
+        [-np.sin(np.radians(theta5)), 0, np.cos(np.radians(theta5)), 0],
         [0, 0, 0, 1]
         ])
 
         return T01, T12, T23, T34, T4ee
 
 
-    def compute_direct_differential_kinematics_from_configuration(self, q):
+    def compute_direct_differential_kinematics_from_configuration(self, q, theta5):
         theta1, theta2, d3, theta4 = q
 
         T01, T12, T23, T34, T4ee = self.compute_transform_matrix(q)
@@ -278,9 +298,9 @@ class RobotController(Node):
                        [0, np.cos(theta4), -np.sin(theta4)],
                        [0, np.sin(theta4), np.cos(theta4),]]) 
         Z3 = np.array([[0], [0], [d3]])
-        Z5 = np.array([[np.cos(np.radians(30)), 0, np.sin(np.radians(30))],
+        Z5 = np.array([[np.cos(np.radians(theta5)), 0, np.sin(np.radians(theta5))],
                       [0, 1, 0],
-                      [-np.sin(np.radians(30)), 0, np.cos(np.radians(30))]])
+                      [-np.sin(np.radians(theta5)), 0, np.cos(np.radians(theta5))]])
         J1 = np.vstack((np.array(Z1 @ (P0ee - P01)), np.array([[1],[0],[0]])))
         J2 = np.vstack((np.array(Z2 @ (P0ee - P02)), np.array([[1],[0],[0]])))
         J3 = np.vstack((np.array(Z3), np.array([[0],[0],[0]])))
@@ -292,11 +312,10 @@ class RobotController(Node):
        
         return J
 
-    def compute_motion(self, p_desired, graph):
+    def compute_motion(self, p_desired, graph, Kp, Kd):
         # Given end effector position matrix 
         p_desired = np.array([1, 2, 1])
         tau = []
-
         # Initial guess for joint positions
         #q_current = np.array([0, 0, 0, 0])
 
@@ -309,21 +328,21 @@ class RobotController(Node):
         for q_current in graph:
             p_current = self.compute_forward_kinematics_from_configuration(q_current)
 
-            error = np.linalg.norm(np.array(p_desired) - np.array(p_current)).astype(int)
+            error = np.linalg.norm(np.array(p_desired) - np.array(p_current))
 
             # Check if the error is below the tolerance
             if np.linalg.norm(error) < tolerance:
                 print("Converged!")
                 q_desired = q_current
+                q_desired.append(np.radians(30))
                 q_dot_desired = np.gradient(q_desired, 0.01)
                 q_ddot_desired = np.gradient(q_dot_desired, 0.01)
                 q_dot = np.gradient(q_current, 0.01)
 
                 # Update joint positions using the computed velocities
                 q_current += q_dot * 0.01
-
                 # Print the result
-                tau.append(self.inverse_dynamics(q_ddot_desired, q_dot_desired, q_desired, q_dot, q_current))
+                tau.append(self.inverse_dynamics(q_ddot_desired, q_dot_desired, q_desired, q_dot, q_current, Kp, Kd))
                 break
             else:
                 print("Invalid joint configuration!")
@@ -334,8 +353,6 @@ class RobotController(Node):
         # Compute joint velocities using the Jacobian inverse
 
         return tau
-
-        #!/usr/bin/env python
  
     def apply_torque(self, joint_name, torque, position):
         msg = JointTrajectory()
@@ -376,18 +393,26 @@ class RobotController(Node):
             self.get_logger().error("Failed to apply effort")
         
 
-    def control_script(self, joints, tau, graph):
+    def control_script(self, joints, tau, graph, Kp, Kd):
        # Specify joint name (replace 'joint1' with your joint name)
         #for i in range(4):
         for node in graph:
             for i, pos in enumerate(node):
-                self.apply_torque(joints[i], tau[i], pos)
+                errors = graph[-1][i][pos] - pos
+                v = np.gradient(pos, 0.01)
 
-    def solve_numerical_inverse_kinematics(self, q_initial, target_position):
+                # Compute the PD control signal
+                pd_signal = Kp * errors + Kd * v
+
+                # Add the PD control signal to the torques
+                tau_modified = tau[i] + pd_signal
+                self.apply_torque(joints[i], tau_modified, pos)
+
+    def solve_numerical_inverse_kinematics(self, q_initial, target_position, theta5):
         q_result = q_initial.copy()
 
         for iteration in range(100):
-            J = self.compute_direct_differential_kinematics_from_configuration(q_initial)
+            J = self.compute_direct_differential_kinematics_from_configuration(q_initial, theta5)
             error = (target_position - self.compute_forward_kinematics_from_configuration(q_initial)).reshape(-1, 1)
             error = np.vstack((error, np.zeros_like(error)))
             delta_theta = 0.1 * np.linalg.pinv(J) @ error
@@ -397,22 +422,38 @@ class RobotController(Node):
             q_initial = q_result
             
             if np.linalg.norm(delta_theta) < 1e-6:
-                break
+                for i, joint in enumerate(self.robot_desc.joints):
+                        if q_result[i]>=joint.limit.lower and q_result[i]<=joint.limit.upper:
+                             print('Joint conf okay')
+                             if i==3:
+                                 break  
+                                
+            return q_result.astype(int)
+                    
+
+    def minimize_distance(self, q_goal, theta5=30):
+        null_step = 0.01
+        q_goal = q_goal - (theta5 * null_step)
         
-        return q_result.astype(int)
+        return q_goal
+        
 
 
 
 def main():
     rclpy.init()
     node = RobotController()
+    Kp = 0.5
+    Kd = 0.1
+    theta5 = 30
     try:
         while rclpy.ok():
-            q_goal = node.solve_numerical_inverse_kinematics(np.array([0, 0, 0, 0]), np.array([1,2,1]))
+            q_goal = node.solve_numerical_inverse_kinematics(np.array([0, 0, 0, 0]), np.array([1,2,1]), theta5)
+            q_goal = node.minimize_distance(q_goal, theta5)
             graph = node.get_trajectory(q_goal, np.array([0, 0, 0, 0]), np.array([0, 0, 0, 0]))
-            tau = node.compute_motion(np.array([1,2,1]), graph)
+            tau = node.compute_motion(np.array([1,2,1]), graph, Kp, Kd)
             joints = np.array(['base_joint', 'base_spherical_joint', 'leg_joint', 'arm_joint'])
-            node.control_script(joints, tau, graph)
+            node.control_script(joints, tau, graph, Kp, Kd)
 
             # Calculate end-effector position
             #end_effector_position = robot.forward_kinematics(joint_angles_values)[:3, 3]

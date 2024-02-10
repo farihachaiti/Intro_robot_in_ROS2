@@ -92,7 +92,7 @@ class FramePublisher():
         pitch = orientation_rates[1]
         yaw = orientation_rates[2]
         self.robot_description = self.get_parameter('robot_description').get_parameter_value().string_value
-                # Parse the URDF
+        # Parse the URDF
         try:
             self.robot_desc = URDF.from_xml_string(self.robot_description)
         except Exception as e:
@@ -143,7 +143,7 @@ def main():
             timer1 = robot.node.create_timer(1.0, lambda:robot.publish_tf(1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'leg_link', 'base_link'))
             timer2 = robot.node.create_timer(1.1, lambda:robot.publish_tf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'arm_link', 'leg_link'))
             timer3 = robot.node.create_timer(1.1, lambda:robot.publish_tf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'end_effector', 'arm_link'))
-
+            timer4 = robot.node.create_timer(1.1, lambda:robot.publish_tf(0.0, 0.0, 0.0, 0.0, np.radians(30.0), 0.0, 'tool_mic', 'end_effector'))
             rclpy.spin(robot.node)
     except KeyboardInterrupt:
         pass
@@ -151,6 +151,7 @@ def main():
         timer1.cancel()
         timer2.cancel()
         timer3.cancel()
+        timer4.cancel()
         robot.node.destroy_node()
         rclpy.shutdown()
 

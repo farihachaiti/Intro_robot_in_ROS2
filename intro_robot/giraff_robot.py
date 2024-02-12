@@ -17,7 +17,11 @@ class FramePublisher():
         self.publish_rate = 10
         self.rate = self.node.create_rate(self.publish_rate)
         self.joint_state_publisher = self.node.create_publisher(JointState, '/joint_states', 10)
-
+        self.node.declare_parameter('robot_description', '')
+        if self.node.has_parameter('robot_description'):
+            self.robot_description = self.node.get_parameter('robot_description').get_parameter_value().string_value
+        else:
+            self.node.get_logger().error("Parameter 'robot_description' is missing!")
         self.node.create_subscription(
             JointState,
             'joint_states',
@@ -91,10 +95,11 @@ class FramePublisher():
         roll = orientation_rates[0]
         pitch = orientation_rates[1]
         yaw = orientation_rates[2]
-        self.robot_description = self.get_parameter('robot_description').get_parameter_value().string_value
+        print(self.robot_description)
         # Parse the URDF
         try:
-            self.robot_desc = URDF.from_xml_string(self.robot_description)
+            with open(self.robot_description, 'r') as urdf_file:
+                self.robot_desc = URDF.from_xml_string(urdf_file.read())
         except Exception as e:
             self.get_logger().error(f"Error parsing URDF: {e}")
             self.robot_desc = None

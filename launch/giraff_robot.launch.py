@@ -59,6 +59,7 @@ def generate_launch_description():
         executable='robot_controller',
         name='robot_controller',
         output='screen',
+        parameters=[{'robot_description' : LaunchConfiguration('use_urdf')}],
         emulate_tty=True,  # Keeps color in the terminal
     )
 
@@ -78,7 +79,7 @@ def generate_launch_description():
         executable='giraff_robot',  # Replace with the name of your node executable
         name='giraff_robot',
         output='screen',
-	parameters=[{'robot_description' : LaunchConfiguration('use_urdf')}],
+	    parameters=[{'robot_description' : LaunchConfiguration('use_urdf')}],
 
     )
 

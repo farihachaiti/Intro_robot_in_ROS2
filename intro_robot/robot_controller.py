@@ -21,11 +21,15 @@ class RobotController(Node):
         self.joint_trajectory_publisher = self.create_publisher(JointTrajectory, '/joint_trajectory', 10)
         self.joint_state_publisher = self.create_publisher(JointState, '/joint_states', 10)
         self.joint_effort_srv_client= self.create_client(ApplyJointEffort, '/apply_joint_effort')
-    
-        self.robot_description = self.get_parameter('robot_description').get_parameter_value().string_value
+        self.declare_parameter('robot_description', '')
+        if self.has_parameter('robot_description'):
+            self.robot_description = self.get_parameter('robot_description').get_parameter_value().string_value
+        else:
+            self.get_logger().error("Parameter 'robot_description' is missing!")
         # Parse the URDF
         try:
-            self.robot_desc = URDF.from_xml_string(self.robot_description)
+            with open(self.robot_description, 'r') as urdf_file:
+                self.robot_desc = URDF.from_xml_string(urdf_file.read())
         except Exception as e:
             self.get_logger().error(f"Error parsing URDF: {e}")
             self.robot_desc = None
@@ -225,15 +229,15 @@ class RobotController(Node):
 
         T01 =  np.array([
         [1, 0, 0, 0],
-        [0, np.cos(theta1), -np.sin(theta1), 0],
-        [0, np.sin(theta1), np.cos(theta1), L1],
+        [0, np.cos(np.radians(theta1)), -np.sin(np.radians(theta1)), 0],
+        [0, np.sin(np.radians(theta1)), np.cos(np.radians(theta1)), L1],
         [0, 0, 0, 1]
         ])
 
         T12 =  np.array([
         [1, 0, 0, 0],
-        [0, np.cos(theta2), -np.sin(theta2), 0],
-        [0, np.sin(theta2), np.cos(theta2), L2],
+        [0, np.cos(np.radians(theta2)), -np.sin(np.radians(theta2)), 0],
+        [0, np.sin(np.radians(theta2)), np.cos(np.radians(theta2)), L2],
         [0, 0, 0, 1]
         ])
 
@@ -247,8 +251,8 @@ class RobotController(Node):
 
         T34 =  np.array([
         [1, 0, 0, -L4],
-        [0, np.cos(theta4), -np.sin(theta4), 0],
-        [0, np.sin(theta4), np.cos(theta4), 0],
+        [0, np.cos(np.radians(theta4)), -np.sin(np.radians(theta4)), 0],
+        [0, np.sin(np.radians(theta4)), np.cos(np.radians(theta4)), 0],
         [0, 0, 0, 1]
         ])
 
@@ -277,6 +281,7 @@ class RobotController(Node):
         P03 = T03[:3, 3]
         P04 = T04[:3, 3]
         P0ee = T0ee[:3, 3]
+     
         P01 = P01.reshape(-1,1)
         P02 = P02.reshape(-1,1)
         P03 = P03.reshape(-1,1)
@@ -292,27 +297,20 @@ class RobotController(Node):
         d3 = displacement across links of Z3
         Z3 = holding tool_mic link containing the microphone
         '''
-        Z1 = np.array([[1, 0, 0],
-                       [0, np.cos(theta1), -np.sin(theta1)],
-                       [0, np.sin(theta1), np.cos(theta1),]]) 
-        Z2 = np.array([[1, 0, 0],
-                       [0, np.cos(theta2), -np.sin(theta2)],
-                       [0, np.sin(theta2), np.cos(theta2),]]) 
-        Z4 = np.array([[1, 0, 0],
-                       [0, np.cos(theta4), -np.sin(theta4)],
-                       [0, np.sin(theta4), np.cos(theta4),]]) 
-        Z3 = np.array([[0], [0], [d3]])
-        Z5 = np.array([[np.cos(np.radians(theta5)), 0, np.sin(np.radians(theta5))],
-                      [0, 1, 0],
-                      [-np.sin(np.radians(theta5)), 0, np.cos(np.radians(theta5))]])
-        J1 = np.vstack((np.array(Z1 @ (P0ee - P01)), np.array([[1],[0],[0]])))
-        J2 = np.vstack((np.array(Z2 @ (P0ee - P02)), np.array([[1],[0],[0]])))
-        J3 = np.vstack((np.array(Z3), np.array([[0],[0],[0]])))
-        J4 = np.vstack((np.array(Z4 @ (P0ee - P03)), np.array([[1],[0],[0]])))
-        J5 = np.vstack((np.array(Z5 @ (P0ee - P04)), np.array([[0],[1],[0]])))
-    
         
-        J = np.concatenate((J1, J2, J3, J4, J5), axis=1)
+        Z1 = np.array([[1], [0], [0]]) 
+        Z2 = np.array([[1], [0], [0]]) 
+        Z4 = np.array([[1], [0], [0]]) 
+        Z3 = np.array([[0], [0], [d3]])
+        Z5 = np.array([[0], [1], [0]])
+
+        J1 = np.vstack((np.cross(Z1, (P0ee - P01), axis=0), Z1))
+        J2 = np.vstack((np.cross(Z2, (P0ee - P02), axis=0), Z2))
+        J3 = np.vstack((np.array(Z3), np.array([[0],[0],[0]])))
+        J4 = np.vstack((np.cross(Z4, (P0ee - P03), axis=0), Z4))
+        J5 = np.vstack((np.cross(Z5, (P0ee - P04), axis=0), Z5))
+
+        J = np.hstack((J1, J2, J3, J4, J5))
        
         return J
 
@@ -425,16 +423,23 @@ class RobotController(Node):
     def is_singular(self, J):
         okay = False
         num_dofs = 5  # Example: 3 degrees of freedom in task space
-        if np.linalg.cond(J)>1e6:
+        '''if np.linalg.cond(J)>1e6:
             print('Singularity alert!')
-        elif np.linalg.matrix_rank(J)<num_dofs:
+            print('one')'''
+        if np.linalg.matrix_rank(J)<num_dofs:
             print('Singularity alert!')
+            print('two')
         elif np.linalg.eigvals(J) <=0.5:
             print('Singularity alert')
+            print('three')
         else:
             print('no singularity! everything is fine :)!')
             okay = True
-
+        print(np.linalg.cond(J))
+        print(1e6)
+        print(J.shape)
+        print(J)
+        print(J[:, 1])
         # Perform singular value decomposition (SVD) on the Jacobian matrix
         if not okay:
             U, s, V = np.linalg.svd(J)
@@ -442,11 +447,10 @@ class RobotController(Node):
             # Find linearly dependent columns (where singular values are close to zero)
             linearly_dependent_indices = np.where(s < 1e-10)[0]
 
-            # Extract linearly dependent columns from the Jacobian matrix
-            linearly_dependent_columns = J[:, linearly_dependent_indices]
+
             print('Problematics columns:')
-            for col in range(linearly_dependent_columns):                
-                print(np.linalg.matrix_rank(col))
+            for col_index in linearly_dependent_indices:                
+                print(np.linalg.matrix_rank(J[:, col_index]))
             return True
         else:
             return False
@@ -499,8 +503,8 @@ class RobotController(Node):
        
 
 
-def main():
-    rclpy.init()
+def main(args=None):
+    rclpy.init(args=args)
     node = RobotController()
     Kp = 0.5
     Kd = 0.1
@@ -513,14 +517,7 @@ def main():
             tau = node.compute_motion(np.array([1,2,1]), graph, Kp, Kd)
             joints = np.array(['base_joint', 'base_spherical_joint', 'leg_joint', 'arm_joint', 'end_effector_joint'])
             node.control_script(joints, tau, graph, Kp, Kd)
-
-            # Calculate end-effector position
-            #end_effector_position = robot.forward_kinematics(joint_angles_values)[:3, 3]
-        
-
-            # Calculate end-effector velocity
-            #jacobian_matrix = robot.direct_differential_kinematics(joint_angles_values)
-
+            
             rclpy.spin(node)
     except KeyboardInterrupt:
         pass

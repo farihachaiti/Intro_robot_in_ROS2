@@ -176,10 +176,10 @@
         <child link="tool_mic"/>
         <axis xyz="0 1 0" />
         <origin xyz="0 0 0" rpy="0 0 0"/>
-        <safety_controller k_position="3.1416" k_velocity="1.0" k_effort="100.0"/>
+        <safety_controller k_position="0.5236" k_velocity="1.0" k_effort="100.0"/>
         <calibration rising="0.0" falling="0.0"/>
         <dynamics damping="0.0" friction="0.0"/>
-        <limit lower="0.0" upper="30.0" effort="100.0" velocity="1.0" />
+        <limit lower="0.0" upper="0.5236" effort="100.0" velocity="1.0" />
         <stiffness value="0.0"/>
         <visual>
             <geometry>

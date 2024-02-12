@@ -34,16 +34,18 @@ class RobotController(Node):
             self.get_logger().info('Service not available, waiting...')
 
 
-    def listen_tf(self):
+    '''def listen_tf(self):
         try:
             transform1 = self.tf_buffer.lookup_transform('base_link', 'leg_link', rclpy.time.Time())
             transform2 = self.tf_buffer.lookup_transform('leg_link', 'arm_link', rclpy.time.Time())
             transform3 = self.tf_buffer.lookup_transform('arm_link', 'end_effector', rclpy.time.Time())
+            transform4 = self.tf_buffer.lookup_transform('end_effector', 'tool_mic', rclpy.time.Time())
             self.get_logger().info(f'Transform received from base link to leg link: {transform1}')
             self.get_logger().info(f'Transform received from leg link to arm link: {transform2}')
             self.get_logger().info(f'Transform received from arm link to end effector: {transform3}')
+            self.get_logger().info(f'Transform received from end effector to microphone tool: {transform4}')
         except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as e:
-            self.get_logger().warn(f'Failed to lookup transform: {e}')
+            self.get_logger().warn(f'Failed to lookup transform: {e}')'''
 
     def get_cost(self, config1, config2):
         return np.linalg.norm(np.array(config1) - np.array(config2)).astype(int)
@@ -110,7 +112,7 @@ class RobotController(Node):
         
             
         while self.get_cost(q_goal, q_init)>0:
-            q_random = [np.random.randint(-217, -215), np.random.randint(151, 153), np.random.randint(0, 2), np.random.randint(55, 57)]
+            q_random = [np.random.randint(q_goal[0]-1, q_goal[0]+1), np.random.randint(q_goal[1]-1, q_goal[1]+1), np.random.randint(q_goal[2]-1, q_goal[2]+1), np.random.randint(q_goal[3]-1, q_goal[3]+1)]
             if self.is_clear(q_random, graph):
                 q_nearest = self.nearest(graph, q_random) 
                 q_new = self.extend(q_nearest, q_random)
@@ -128,8 +130,10 @@ class RobotController(Node):
                         if (self.get_cost(q_goal, q_new) + self.get_cost(q_new, near_node))<self.get_cost(q_goal, near_node):
                             self.rewire(near_nodes, idx, q_new)  
 
-
-                q_init = q_new      
+                if self.is_joint_okay(q_new):
+                    q_init = q_new  
+                else:
+                    continue    
         return graph
 
 
@@ -327,14 +331,12 @@ class RobotController(Node):
         # Numerical inverse kinematics using the Jacobian inverse method
         for q_current in graph:
             p_current = self.compute_forward_kinematics_from_configuration(q_current)
-
             error = np.linalg.norm(np.array(p_desired) - np.array(p_current))
 
             # Check if the error is below the tolerance
             if np.linalg.norm(error) < tolerance:
                 print("Converged!")
-                q_desired = q_current
-                q_desired.append(np.radians(30))
+                q_desired = q_current               
                 q_dot_desired = np.gradient(q_desired, 0.01)
                 q_ddot_desired = np.gradient(q_dot_desired, 0.01)
                 q_dot = np.gradient(q_current, 0.01)
@@ -367,14 +369,6 @@ class RobotController(Node):
         msg.points = [point]
         self.joint_trajectory_publisher.publish(msg)
 
-        joint_state_msg = JointState()
-        joint_state_msg.header.stamp = self.get_clock().now().to_msg()
-        joint_state_msg.name = [joint_name]  # Add your joint names
-        joint_state_msg.position = [position]  # Add your joint positions
-
-        # Publish joint state information
-        self.joint_state_publisher.publish(joint_state_msg)
-
         effort = ApplyJointEffort.Request()
         effort.joint_name = joint_name
         effort.effort = torque
@@ -386,6 +380,14 @@ class RobotController(Node):
 
         # Wait for the result
         rclpy.spin_until_future_complete(self, future)
+
+        joint_state_msg = JointState()
+        joint_state_msg.header.stamp = self.get_clock().now().to_msg()
+        joint_state_msg.name = [joint_name]  # Add your joint names
+        joint_state_msg.position = [position]  # Add your joint positions
+
+        # Publish joint state information
+        self.joint_state_publisher.publish(joint_state_msg)
         # Check if the request was successful
         if future.result() is not None:
             self.get_logger().info("Effort applied successfully")
@@ -397,6 +399,7 @@ class RobotController(Node):
        # Specify joint name (replace 'joint1' with your joint name)
         #for i in range(4):
         for node in graph:
+            node = self.minimize_distance(node)
             for i, pos in enumerate(node):
                 errors = graph[-1][i][pos] - pos
                 v = np.gradient(pos, 0.01)
@@ -406,38 +409,94 @@ class RobotController(Node):
 
                 # Add the PD control signal to the torques
                 tau_modified = tau[i] + pd_signal
-                self.apply_torque(joints[i], tau_modified, pos)
+                if i<=3:
+                    self.apply_torque(joints[i], tau_modified, pos)
+                else:
+                    joint_state_msg = JointState()
+                    joint_state_msg.header.stamp = self.get_clock().now().to_msg()
+                    joint_state_msg.name = [joints[i]]  # Add your joint names
+                    joint_state_msg.position = [np.radians(30)]  # Add your joint positions
+
+                    # Publish joint state information
+                    self.joint_state_publisher.publish(joint_state_msg)
+                break
+
+
+    def is_singular(self, J):
+        okay = False
+        num_dofs = 5  # Example: 3 degrees of freedom in task space
+        if np.linalg.cond(J)>1e6:
+            print('Singularity alert!')
+        elif np.linalg.matrix_rank(J)<num_dofs:
+            print('Singularity alert!')
+        elif np.linalg.eigvals(J) <=0.5:
+            print('Singularity alert')
+        else:
+            print('no singularity! everything is fine :)!')
+            okay = True
+
+        # Perform singular value decomposition (SVD) on the Jacobian matrix
+        if not okay:
+            U, s, V = np.linalg.svd(J)
+
+            # Find linearly dependent columns (where singular values are close to zero)
+            linearly_dependent_indices = np.where(s < 1e-10)[0]
+
+            # Extract linearly dependent columns from the Jacobian matrix
+            linearly_dependent_columns = J[:, linearly_dependent_indices]
+            print('Problematics columns:')
+            for col in range(linearly_dependent_columns):                
+                print(np.linalg.matrix_rank(col))
+            return True
+        else:
+            return False
 
     def solve_numerical_inverse_kinematics(self, q_initial, target_position, theta5):
         q_result = q_initial.copy()
-
-        for iteration in range(100):
-            J = self.compute_direct_differential_kinematics_from_configuration(q_initial, theta5)
-            error = (target_position - self.compute_forward_kinematics_from_configuration(q_initial)).reshape(-1, 1)
-            error = np.vstack((error, np.zeros_like(error)))
-            delta_theta = 0.1 * np.linalg.pinv(J) @ error
-            q_result = q_result.astype(float)
-            delta_theta = ((delta_theta[:4]).flatten()).T
-            q_result += delta_theta
-            q_initial = q_result
+        J = self.compute_direct_differential_kinematics_from_configuration(q_initial, theta5)
+        if self.is_singular(J):
+            return
+        else:
+            for iteration in range(100):
             
-            if np.linalg.norm(delta_theta) < 1e-6:
-                for i, joint in enumerate(self.robot_desc.joints):
-                        if q_result[i]>=joint.limit.lower and q_result[i]<=joint.limit.upper:
-                             print('Joint conf okay')
-                             if i==3:
-                                 break  
+                error = (target_position - self.compute_forward_kinematics_from_configuration(q_initial)).reshape(-1, 1)
+                error = np.vstack((error, np.zeros_like(error)))
+                delta_theta = 0.1 * np.linalg.pinv(J) @ error
+                q_result = q_result.astype(float)
+                delta_theta = ((delta_theta[:4]).flatten()).T
+                q_result += delta_theta
+                q_initial = q_result
+                
+                if np.linalg.norm(delta_theta) < 1e-6:
+                    if self.is_joint_okay(q_result):
+                        break
+                    else:
+                        continue
+                        
                                 
-            return q_result.astype(int)
-                    
+        return q_result.astype(int)
+    
+
+    def is_joint_okay(self, q_result):
+        for i, joint in enumerate(self.robot_desc.joints):
+            if q_result[i]>=joint.limit.lower and q_result[i]<=joint.limit.upper:
+                print('Joint conf okay')
+                if i==3:
+                    break
+            else:
+                return False
+        return True
+
+
 
     def minimize_distance(self, q_goal, theta5=30):
         null_step = 0.01
-        q_goal = q_goal - (theta5 * null_step)
-        
-        return q_goal
-        
-
+        q_goal_minimized = q_goal - (theta5 * null_step)
+        if self.is_joint_okay(q_goal_minimized):
+            return q_goal_minimized
+        else:
+            return q_goal
+       
 
 
 def main():
@@ -452,7 +511,7 @@ def main():
             q_goal = node.minimize_distance(q_goal, theta5)
             graph = node.get_trajectory(q_goal, np.array([0, 0, 0, 0]), np.array([0, 0, 0, 0]))
             tau = node.compute_motion(np.array([1,2,1]), graph, Kp, Kd)
-            joints = np.array(['base_joint', 'base_spherical_joint', 'leg_joint', 'arm_joint'])
+            joints = np.array(['base_joint', 'base_spherical_joint', 'leg_joint', 'arm_joint', 'end_effector_joint'])
             node.control_script(joints, tau, graph, Kp, Kd)
 
             # Calculate end-effector position

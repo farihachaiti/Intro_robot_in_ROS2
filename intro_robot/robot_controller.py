@@ -423,9 +423,9 @@ class RobotController(Node):
     def is_singular(self, J):
         okay = False
         num_dofs = 5  # Example: 3 degrees of freedom in task space
-        '''if np.linalg.cond(J)>1e6:
+        if np.linalg.cond(J)>1e6:
             print('Singularity alert!')
-            print('one')'''
+            print('one')
         if np.linalg.matrix_rank(J)<num_dofs:
             print('Singularity alert!')
             print('two')

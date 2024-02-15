@@ -277,11 +277,11 @@ class RobotController(Node):
         T04 = np.dot(T03, T34)
         T0ee = np.dot(T04, T4ee)
 
-        P01 = T01[:3, 4]
-        P02 = T02[:3, 4]
-        P03 = T03[:3, 4]
-        P04 = T04[:3, 4]
-        P0ee = T0ee[:3, 4]
+        P01 = T01[:3, 3]
+        P02 = T02[:3, 3]
+        P03 = T03[:3, 3]
+        P04 = T04[:3, 3]
+        P0ee = T0ee[:3, 3]
      
         P01 = P01.reshape(-1,1)
         P02 = P02.reshape(-1,1)
@@ -457,6 +457,7 @@ class RobotController(Node):
             return False
 
     def solve_numerical_inverse_kinematics(self, q_initial, target_position, theta5):
+        print(q_initial)
         q_result = q_initial.copy()
         J = self.compute_direct_differential_kinematics_from_configuration(q_initial, theta5)
         if self.is_singular(J):

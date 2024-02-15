@@ -200,6 +200,7 @@ class RobotController(Node):
         L2 = 0.6
         L3 = 0.6
         L4 = 0.6
+        L5 = 0.6
 
         T01 =  np.array([
         [1, 0, 0, 0],
@@ -233,7 +234,7 @@ class RobotController(Node):
         T4ee =  np.array([
         [np.cos(np.radians(theta5)), 0, np.sin(np.radians(theta5)), 0],
         [0, 1, 0, 0],
-        [-np.sin(np.radians(theta5)), 0, np.cos(np.radians(theta5)), 0],
+        [-np.sin(np.radians(theta5)), 0, np.cos(np.radians(theta5)), -L5],
         [0, 0, 0, 1]
         ])
 
@@ -478,11 +479,13 @@ class RobotController(Node):
 
 
 
-    def minimize_distance(self, q_goal, theta5=30):
+    def minimize_distance(self, q_goal, theta5=np.radians(30)):
         null_step = 0.01
         q_goal_minimized = q_goal - (theta5 * null_step)
         if self.is_joint_okay(q_goal_minimized):
             return q_goal_minimized
+        else: 
+            return q_goal
        
 
 

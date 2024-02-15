@@ -127,11 +127,11 @@ class RobotController(Node):
                     if self.is_clear(near_node, graph) and np.all(np.array(graph))!=0:                   
                         if (self.get_cost(q_goal, near_node) + self.get_cost(q_new, near_node)) < min_cost:
                             min_cost = self.get_cost(q_goal, near_node) + self.get_cost(q_new, near_node)
-                if (self.is_joint_okay(q_new)) and (not self.is_singular(self.compute_forward_kinematics_from_configuration(q_new))):
-                    graph.append(q_new)
+                if (self.is_joint_okay(float(q_new))) and (not self.is_singular(self.compute_forward_kinematics_from_configuration(float(q_new)))):
+                    graph.append(float(q_new))
                 else:
                     q_new += np.array([0.1, 0.1, 0.1, 0.1])
-                    graph.append(q_new)
+                    graph.append(float(q_new))
                 for idx, near_node in enumerate(near_nodes):
                     if self.is_clear(near_node, graph) and np.all(np.array(graph))!=0: 
                         if (self.get_cost(q_goal, q_new) + self.get_cost(q_new, near_node))<self.get_cost(q_goal, near_node):
@@ -508,9 +508,10 @@ def main(args=None):
             q_goal = node.solve_numerical_inverse_kinematics(np.array([0, 0, 0, 0]), np.array([1,2,1]), theta5)
             q_goal = node.minimize_distance(q_goal, theta5)
             graph = node.get_trajectory(q_goal, np.array([0, 0, 0, 0]))
-            tau = node.compute_motion(np.array([1,2,1]), graph, Kp, Kd)
+            print(graph)
+            '''tau = node.compute_motion(np.array([1,2,1]), graph, Kp, Kd)
             joints = np.array(['base_joint', 'base_spherical_joint', 'leg_joint', 'arm_joint', 'end_effector_joint'])
-            node.control_script(joints, tau, graph, Kp, Kd)
+            node.control_script(joints, tau, graph, Kp, Kd)'''
             
             rclpy.spin(node)
     except KeyboardInterrupt:

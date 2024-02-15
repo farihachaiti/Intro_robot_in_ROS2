@@ -127,7 +127,7 @@ class RobotController(Node):
                     if self.is_clear(near_node, graph) and np.all(np.array(graph))!=0:                   
                         if (self.get_cost(q_goal, near_node) + self.get_cost(q_new, near_node)) < min_cost:
                             min_cost = self.get_cost(q_goal, near_node) + self.get_cost(q_new, near_node)
-                if self.is_joint_okay(q_new):
+                if (self.is_joint_okay(q_new)) and (not self.is_singular(self.compute_forward_kinematics_from_configuration(q_new))):
                     graph.append(q_new)
                 else:
                     q_new += np.array([0.1, 0.1, 0.1, 0.1])

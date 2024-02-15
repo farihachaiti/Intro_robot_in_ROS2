@@ -127,17 +127,18 @@ class RobotController(Node):
                     if self.is_clear(near_node, graph) and np.all(np.array(graph))!=0:                   
                         if (self.get_cost(q_goal, near_node) + self.get_cost(q_new, near_node)) < min_cost:
                             min_cost = self.get_cost(q_goal, near_node) + self.get_cost(q_new, near_node)
-                
-                graph.append(q_new)
+                if self.is_joint_okay(q_new):
+                    graph.append(q_new)
+                else:
+                    q_new += np.array([0.1, 0.1, 0.1, 0.1])
+                    graph.append(q_new)
                 for idx, near_node in enumerate(near_nodes):
                     if self.is_clear(near_node, graph) and np.all(np.array(graph))!=0: 
                         if (self.get_cost(q_goal, q_new) + self.get_cost(q_new, near_node))<self.get_cost(q_goal, near_node):
                             self.rewire(near_nodes, idx, q_new)  
 
-                if self.is_joint_okay(q_new):
-                    q_init = q_new  
-                else:
-                    continue    
+                
+                    q_init = q_new    
         return graph
 
 

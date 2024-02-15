@@ -206,19 +206,13 @@ class RobotController(Node):
 
         T01, T12, T23, T34, T4ee = self.compute_transform_matrix(q)
         T_total = T01 @ T12 @ T23 @ T34 @ T4ee
-
-
-        # Forward kinematics equations
-        #x = L1 * np.cos(theta1) + L3 * np.cos(theta1 + theta3) + L4 * np.cos(theta1 + theta3 + theta4)
-        #y = L1 * np.sin(theta1) + L3 * np.sin(theta1 + theta3) + L4 * np.sin(theta1 + theta3 + theta4)
-        #z = d2 + L2 + L5
         
         return  np.array([T_total[0, 3], T_total[1, 3], T_total[2, 3]])
     
 
     
     def compute_transform_matrix(self, q, theta5 = 30):
-                    # Extract joint angles and prismatic displacements
+        # Extract joint angles and prismatic displacements
         theta1, theta2, d3, theta4 = q
         
 
@@ -460,24 +454,22 @@ class RobotController(Node):
         print(q_initial)
         q_result = q_initial.copy()
         J = self.compute_direct_differential_kinematics_from_configuration(q_initial, theta5)
-        if self.is_singular(J):
-            return
-        else:
-            for iteration in range(100):
+
+        for iteration in range(100):
+        
+            error = (target_position - self.compute_forward_kinematics_from_configuration(q_initial)).reshape(-1, 1)
+            error = np.vstack((error, np.zeros_like(error)))
+            delta_theta = 0.1 * np.linalg.pinv(J) @ error
+            q_result = q_result.astype(float)
+            delta_theta = ((delta_theta[:4]).flatten()).T
+            q_result += delta_theta
+            q_initial = q_result
             
-                error = (target_position - self.compute_forward_kinematics_from_configuration(q_initial)).reshape(-1, 1)
-                error = np.vstack((error, np.zeros_like(error)))
-                delta_theta = 0.1 * np.linalg.pinv(J) @ error
-                q_result = q_result.astype(float)
-                delta_theta = ((delta_theta[:4]).flatten()).T
-                q_result += delta_theta
-                q_initial = q_result
-                
-                if np.linalg.norm(delta_theta) < 1e-6:
-                    if self.is_joint_okay(q_result):
-                        break
-                    else:
-                        continue
+            if np.linalg.norm(delta_theta) < 1e-6:
+                if self.is_joint_okay(q_result):
+                    break
+                else:
+                    continue
                         
                                 
         return q_result.astype(int)
@@ -515,7 +507,7 @@ def main(args=None):
         while rclpy.ok():
             q_goal = node.solve_numerical_inverse_kinematics(np.array([0, 0, 0, 0]), np.array([1,2,1]), theta5)
             q_goal = node.minimize_distance(q_goal, theta5)
-            graph = node.get_trajectory(q_goal, np.array([0, 0, 0, 0]), np.array([0, 0, 0, 0]))
+            graph = node.get_trajectory(q_goal, np.array([0, 0, 0, 0]))
             tau = node.compute_motion(np.array([1,2,1]), graph, Kp, Kd)
             joints = np.array(['base_joint', 'base_spherical_joint', 'leg_joint', 'arm_joint', 'end_effector_joint'])
             node.control_script(joints, tau, graph, Kp, Kd)

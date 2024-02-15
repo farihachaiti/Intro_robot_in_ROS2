@@ -181,17 +181,6 @@ class RobotController(Node):
         return C
 
 
-
-    def inverse_dynamics(self, qdd_desired, qd_desired, q_desired, qd_current, q_current, Kp, Kd):
-        # Define symbolic variables
-        
-
-
-        # Joint positions and velocities
-        #q = sp.Matrix([q1, q2])
-        #qdot = sp.Matrix([sp.diff(qi) for qi in q])
-        return tau
-
     def compute_forward_kinematics_from_configuration(self, q):
 
         T01, T12, T23, T34, T4ee = self.compute_transform_matrix(q)

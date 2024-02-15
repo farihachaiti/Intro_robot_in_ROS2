@@ -10,6 +10,7 @@ from gazebo_msgs.srv import ApplyJointEffort
 from sensor_msgs.msg import JointState
 import tf2_ros
 from urdf_parser_py.urdf import URDF
+from builtin_interfaces.msg import Time, Duration
 
 
 class RobotController(Node):
@@ -76,7 +77,6 @@ class RobotController(Node):
         delta_x2 = q_random[1] - q_nearest[1]
         delta_x3 = q_random[2] - q_nearest[2]
         delta_x4 = q_random[3] - q_nearest[3]
-        #print(q_random[0] - q_nearest[0])
         norm = np.linalg.norm(np.array([delta_x1, delta_x2, delta_x3, delta_x4]))
     
         delta_x1 /= norm
@@ -127,11 +127,11 @@ class RobotController(Node):
                     if self.is_clear(near_node, graph) and np.all(np.array(graph))!=0:                   
                         if (self.get_cost(q_goal, near_node) + self.get_cost(q_new, near_node)) < min_cost:
                             min_cost = self.get_cost(q_goal, near_node) + self.get_cost(q_new, near_node)
-                if (self.is_joint_okay(float(q_new))) and (not self.is_singular(self.compute_forward_kinematics_from_configuration(float(q_new)))):
-                    graph.append(float(q_new))
+                if (self.is_joint_okay(q_new)) and (not self.is_singular(self.compute_forward_kinematics_from_configuration(q_new))):
+                    graph.append(q_new)
                 else:
                     q_new += np.array([0.1, 0.1, 0.1, 0.1])
-                    graph.append(float(q_new))
+                    graph.append(q_new)
                 for idx, near_node in enumerate(near_nodes):
                     if self.is_clear(near_node, graph) and np.all(np.array(graph))!=0: 
                         if (self.get_cost(q_goal, q_new) + self.get_cost(q_new, near_node))<self.get_cost(q_goal, near_node):
@@ -144,23 +144,18 @@ class RobotController(Node):
 
 
     def compute_inertia_matrix(self):
-        M = np.zeros((5, 3, 3))
-        self.robot_description = self.get_parameter('robot_description').get_parameter_value().string_value
-        # Parse the URDF
-        try:
-            self.robot_desc = URDF.from_xml_string(self.robot_description)
-        except Exception as e:
-            self.get_logger().error(f"Error parsing URDF: {e}")
-            self.robot_desc = None
-            for idx, link in enumerate(self.robot_desc.link_map.items()):
+        num_links = len(self.robot_desc.link_map) - 2 
+        M = np.zeros((num_links, 4, 4))
+        for idx, (link_name,link) in enumerate(self.robot_desc.link_map.items()):
+            if link_name!='world' or link_name!='tool_mic':
                 inertial = link.inertial
                 if inertial is not None and inertial.inertia is not None:
-                    M[idx]  = np.array([inertial.inertia.ixx, -inertial.inertia.ixy, -inertial.inertia.ixz, 0, 0],
-                        [-inertial.inertia.ixy[idx], inertial.inertia.iyy[idx], -inertial.inertia.iyz, 0, 0],
-                        [-inertial.inertia.ixz, -inertial.inertia.iyz, inertial.inertia.izz, 0, 0],
-                        [0, 0, 0, 0, 0],
-                        [0, 0, 0, 0, 0])
-
+                    if idx>3:
+                        break
+                    M[idx-1]  = np.array([[inertial.inertia.ixx, -inertial.inertia.ixy, -inertial.inertia.ixz, 0],
+                        [-inertial.inertia.ixy, inertial.inertia.iyy, -inertial.inertia.iyz, 0],
+                        [-inertial.inertia.ixz, -inertial.inertia.iyz, inertial.inertia.izz, 0],
+                        [0, 0, 0, 0]])
 
         return M
             
@@ -189,17 +184,12 @@ class RobotController(Node):
 
     def inverse_dynamics(self, qdd_desired, qd_desired, q_desired, qd_current, q_current, Kp, Kd):
         # Define symbolic variables
-        M  = self.compute_inertia_matrix()
-        C = self.compute_coriolis_matrix(M, q_current, qd_current)
-        G = 9.81
-        for i in range(4):
-            tau = np.dot(M[i], (qdd_desired[i] + np.dot(Kd, (qd_desired[i] - qd_current[i])) + np.dot(Kp, (q_desired[i] - q_current[i])))) + np.dot(C, qd_current[i]) + G
+        
 
 
         # Joint positions and velocities
         #q = sp.Matrix([q1, q2])
         #qdot = sp.Matrix([sp.diff(qi) for qi in q])
-
         return tau
 
     def compute_forward_kinematics_from_configuration(self, q):
@@ -312,17 +302,20 @@ class RobotController(Node):
     def compute_motion(self, p_desired, graph, Kp, Kd):
         # Given end effector position matrix 
         p_desired = np.array([1, 2, 1])
-        tau = []
-        # Initial guess for joint positions
-        #q_current = np.array([0, 0, 0, 0])
+        M  = self.compute_inertia_matrix()
+        
+        G = 9.81
+
 
         # Desired tolerance for convergence
         tolerance = 3
 
         # Maximum number of iterations
-
+        tau_list = []
         # Numerical inverse kinematics using the Jacobian inverse method
-        for q_current in graph:
+
+        for idx, q_current in enumerate(graph):
+
             p_current = self.compute_forward_kinematics_from_configuration(q_current)
             error = np.linalg.norm(np.array(p_desired) - np.array(p_current))
 
@@ -335,10 +328,15 @@ class RobotController(Node):
                 q_dot = np.gradient(q_current, 0.01)
 
                 # Update joint positions using the computed velocities
-                q_current += q_dot * 0.01
-                # Print the result
-                tau.append(self.inverse_dynamics(q_ddot_desired, q_dot_desired, q_desired, q_dot, q_current, Kp, Kd))
-                break
+                q_current = q_current.astype(float)
+                q_current += q_dot * 0.01 
+                C = self.compute_coriolis_matrix(M, q_current, q_dot)
+                tau_list_s = []
+                for i in range(4):
+                    tau = np.dot(M[i], (q_ddot_desired + np.dot(Kd, (q_dot_desired - q_dot)) + np.dot(Kp, (q_desired - q_current)))) + np.dot(C, q_dot) + G
+                    tau_list_s.append(tau)
+                tau_list.append(tau_list_s)
+
             else:
                 print("Invalid joint configuration!")
                 continue
@@ -346,16 +344,23 @@ class RobotController(Node):
         #J = compute_jacobian(q_current)
 
         # Compute joint velocities using the Jacobian inverse
+            
 
-        return tau
+        return tau_list
  
     def apply_torque(self, joint_name, torque, position):
         msg = JointTrajectory()
         msg.joint_names = [joint_name]
+        pos_msg = float(position)
         point = JointTrajectoryPoint()
+        dt = 0.1
         point.positions = [position]  # Set the joint position if required
-        v =  np.gradient(position, 0.01)
-        a =  np.gradient(v, 0.01)
+        
+        position = sp.Symbol('position')
+        dt = sp.Symbol('dt')
+        v = sp.Symbol('v')
+        v = sp.diff(position, dt)
+        a = sp.diff(v, dt)
         point.velocities = [v]  # Set the joint velocity if required
         point.accelerations = [a]
         point.effort = [torque]
@@ -364,11 +369,10 @@ class RobotController(Node):
 
         effort = ApplyJointEffort.Request()
         effort.joint_name = joint_name
-        effort.effort = torque
-        effort.start_time.sec = 0
-        effort.start_time.nanosec = 0
-        effort.duration.sec = 0
-        effort.duration.nanosec = int(1e-8)  # Duration of 0.1 seconds
+        effort.effort = float(torque)
+        
+        effort.start_time = Time(sec=0, nanosec=0)
+        effort.duration = Duration(sec=0, nanosec=0) # Duration of 0.1 seconds
         future = self.joint_effort_srv_client.call_async(effort)
 
         # Wait for the result
@@ -377,7 +381,7 @@ class RobotController(Node):
         joint_state_msg = JointState()
         joint_state_msg.header.stamp = self.get_clock().now().to_msg()
         joint_state_msg.name = [joint_name]  # Add your joint names
-        joint_state_msg.position = [position]  # Add your joint positions
+        joint_state_msg.position = [pos_msg]  # Add your joint positions
 
         # Publish joint state information
         self.joint_state_publisher.publish(joint_state_msg)
@@ -391,17 +395,20 @@ class RobotController(Node):
     def control_script(self, joints, tau, graph, Kp, Kd):
        # Specify joint name (replace 'joint1' with your joint name)
         #for i in range(4):
-        for node in graph:
+        time_differential = 0.01
+        dt = sp.Symbol('time_differential')
+        for k, node in enumerate(graph):
             node = self.minimize_distance(node)
             for i, pos in enumerate(node):
-                errors = graph[-1][i][pos] - pos
-                v = np.gradient(pos, 0.01)
-
+                errors = graph[len(graph)-1][i] - pos
+                position = sp.Symbol('pos')
+                v = sp.diff(position, dt)
                 # Compute the PD control signal
                 pd_signal = Kp * errors + Kd * v
 
                 # Add the PD control signal to the torques
-                tau_modified = tau[i] + pd_signal
+                tau_modified = tau[k, i] + pd_signal
+
                 if i<=3:
                     self.apply_torque(joints[i], tau_modified, pos)
                 else:
@@ -430,11 +437,7 @@ class RobotController(Node):
         else:
             print('no singularity! everything is fine :)!')
             okay = True
-        print(np.linalg.cond(J))
-        print(1e6)
-        print(J.shape)
-        print(J)
-        print(J[:, 1])
+
         # Perform singular value decomposition (SVD) on the Jacobian matrix
         if not okay:
             U, s, V = np.linalg.svd(J)
@@ -451,7 +454,6 @@ class RobotController(Node):
             return False
 
     def solve_numerical_inverse_kinematics(self, q_initial, target_position, theta5):
-        print(q_initial)
         q_result = q_initial.copy()
         J = self.compute_direct_differential_kinematics_from_configuration(q_initial, theta5)
 
@@ -492,8 +494,6 @@ class RobotController(Node):
         q_goal_minimized = q_goal - (theta5 * null_step)
         if self.is_joint_okay(q_goal_minimized):
             return q_goal_minimized
-        else:
-            return q_goal
        
 
 
@@ -509,9 +509,11 @@ def main(args=None):
             q_goal = node.minimize_distance(q_goal, theta5)
             graph = node.get_trajectory(q_goal, np.array([0, 0, 0, 0]))
             print(graph)
-            '''tau = node.compute_motion(np.array([1,2,1]), graph, Kp, Kd)
+            tau = node.compute_motion(np.array([1,2,1]), graph, Kp, Kd)
+            tau_arr = np.array(np.mean(tau, axis=2))
+            print(tau_arr)
             joints = np.array(['base_joint', 'base_spherical_joint', 'leg_joint', 'arm_joint', 'end_effector_joint'])
-            node.control_script(joints, tau, graph, Kp, Kd)'''
+            node.control_script(joints, tau_arr, graph, Kp, Kd)
             
             rclpy.spin(node)
     except KeyboardInterrupt:

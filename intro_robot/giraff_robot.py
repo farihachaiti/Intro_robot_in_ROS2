@@ -39,6 +39,10 @@ class FramePublisher():
             print("Joint Positions: ", updated_msg.position)            
             joint_state_msg.header = updated_msg.header
             joint_state_msg.name = [updated_msg.name]  # Add your joint names
+            print('giraff')
+            print(updated_msg.position)
+            position = float(updated_msg.position)
+            print(updated_msg.position)
             joint_state_msg.position = [updated_msg.position]  # Add your joint positions
         else:
             print("Received Joint State:")
@@ -47,6 +51,7 @@ class FramePublisher():
             print("Joint Positions: ", position) 
             joint_state_msg.header.stamp = self.get_clock().now().to_msg()
             joint_state_msg.name = [joint_name]  # Add your joint names
+            position = float(position)
             joint_state_msg.position = [position]  # Add your joint positions
 
         # Publish joint state information
@@ -95,7 +100,6 @@ class FramePublisher():
         roll = orientation_rates[0]
         pitch = orientation_rates[1]
         yaw = orientation_rates[2]
-        print(self.robot_description)
         # Parse the URDF
         try:
             with open(self.robot_description, 'r') as urdf_file:

@@ -276,11 +276,11 @@ class RobotController(Node):
         T04 = np.dot(T03, T34)
         T0ee = np.dot(T04, T4ee)
 
-        P01 = T01[:3, 3]
-        P02 = T02[:3, 3]
-        P03 = T03[:3, 3]
-        P04 = T04[:3, 3]
-        P0ee = T0ee[:3, 3]
+        P01 = T01[:3, 4]
+        P02 = T02[:3, 4]
+        P03 = T03[:3, 4]
+        P04 = T04[:3, 4]
+        P0ee = T0ee[:3, 4]
      
         P01 = P01.reshape(-1,1)
         P02 = P02.reshape(-1,1)
@@ -298,11 +298,11 @@ class RobotController(Node):
         Z3 = holding tool_mic link containing the microphone
         '''
         
-        Z1 = np.array([[1], [0], [0]]) 
-        Z2 = np.array([[1], [0], [0]]) 
-        Z4 = np.array([[1], [0], [0]]) 
-        Z3 = np.array([[0], [0], [d3]])
-        Z5 = np.array([[0], [1], [0]])
+        Z1 = np.dot(T01[:3,:3],np.array([[1], [0], [0]]))
+        Z2 = np.dot(T02[:3,:3],np.array([[1], [0], [0]]))
+        Z4 = np.dot(T03[:3,:3],np.array([[1], [0], [0]]))
+        Z3 = np.dot(T04[:3,:3],np.array([[0], [0], [d3]]))
+        Z5 = np.dot(T0ee[:3,:3],np.array([[0], [1], [0]]))
 
         J1 = np.vstack((np.cross(Z1, (P0ee - P01), axis=0), Z1))
         J2 = np.vstack((np.cross(Z2, (P0ee - P02), axis=0), Z2))

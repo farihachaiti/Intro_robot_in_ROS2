@@ -409,7 +409,6 @@ class RobotController(Node):
 
                     # Publish joint state information
                     self.joint_state_publisher.publish(joint_state_msg)
-                break
 
 
     def is_singular(self, J):

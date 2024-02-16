@@ -41,9 +41,9 @@ class FramePublisher():
             joint_state_msg.name = [updated_msg.name]  # Add your joint names
             print('giraff')
             print(updated_msg.position)
-            position = float(updated_msg.position)
+            position = float(updated_msg.position[0])
             print(updated_msg.position)
-            joint_state_msg.position = [updated_msg.position]  # Add your joint positions
+            joint_state_msg.position = [position] # Add your joint positions
         else:
             print("Received Joint State:")
             print("Header: ", self.get_clock().now().to_msg())

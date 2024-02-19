@@ -14,9 +14,8 @@ class FramePublisher():
     def __init__(self):
         self.node = rclpy.create_node('giraff_robot')
         self.tf_broadcaster = tf2_ros.StaticTransformBroadcaster(self.node)
-        self.publish_rate = 10
-        self.rate = self.node.create_rate(self.publish_rate)
-        self.joint_state_publisher = self.node.create_publisher(JointState, '/joint_states', 10)
+        self.publish_rate = rclpy.rate.Rate(10)
+        #self.joint_state_publisher = self.node.create_publisher(JointState, '/joint_states', 10)
         self.node.declare_parameter('robot_description', '')
         if self.node.has_parameter('robot_description'):
             self.robot_description = self.node.get_parameter('robot_description').get_parameter_value().string_value
@@ -28,8 +27,9 @@ class FramePublisher():
             self.joint_state_callback,
             10  # QoS profile depth
         )
+        self.timer = self.node.create_timer(1.0, self.joint_state_callback)  # Trigger every 1 second
 
-    def joint_state_callback(self, updated_msg, joint_name=None, position=None):
+    def joint_state_callback(self, updated_msg):
         # Process joint state message
         joint_state_msg = JointState()
         if updated_msg:
@@ -38,25 +38,15 @@ class FramePublisher():
             print("Joint Names: ", updated_msg.name)
             print("Joint Positions: ", updated_msg.position)            
             joint_state_msg.header = updated_msg.header
-            joint_state_msg.name = [updated_msg.name]  # Add your joint names
-            print('giraff')
-            print(updated_msg.position)
-            position = float(updated_msg.position[0])
-            print(updated_msg.position)
-            joint_state_msg.position = [position] # Add your joint positions
+            joint_state_msg.name = updated_msg.name # Add your joint names
+            position = float(updated_msg.position)
+            joint_state_msg.position = position # Add your joint positions
         else:
-            print("Received Joint State:")
-            print("Header: ", self.get_clock().now().to_msg())
-            print("Joint Names: ", joint_name)
-            print("Joint Positions: ", position) 
-            joint_state_msg.header.stamp = self.get_clock().now().to_msg()
-            joint_state_msg.name = [joint_name]  # Add your joint names
-            position = float(position)
-            joint_state_msg.position = [position]  # Add your joint positions
+            print("Error receiving Joint State!")
 
         # Publish joint state information
-        self.joint_state_publisher.publish(joint_state_msg)
-
+        #self.joint_state_publisher.publish(joint_state_msg)
+        
         self.update_tf(joint_state_msg.position, joint_state_msg.name)
 
     def quaternion_from_euler(self, ai, aj, ak):
@@ -140,13 +130,14 @@ class FramePublisher():
         except Exception as e:
              print(f"Failed to publish transform {e}.")
              print(f"Transform lookup time: {t.header.stamp}")
-        self.rate.sleep()
+        self.publish_rate.sleep()
 
 def main():
     rclpy.init()
     robot = FramePublisher()
 
     timer_period = 1.0 #upload this file to vm
+    rate = rclpy.rate.Rate(10)
     try:
         while rclpy.ok():
             timer1 = robot.node.create_timer(1.0, lambda:robot.publish_tf(1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'leg_link', 'base_link'))
@@ -161,6 +152,7 @@ def main():
         timer2.cancel()
         timer3.cancel()
         timer4.cancel()
+        robot.timer.cancel()
         robot.node.destroy_node()
         rclpy.shutdown()
 

@@ -113,10 +113,10 @@
         <child link="base_link"/>
         <origin rpy="0 0 0" xyz="0 0 0"/>
         <axis xyz="1 0 0" />
-        <safety_controller k_position="3.1416" k_velocity="1.0" k_effort="100.0"/>
+        <safety_controller k_position="3.1416" k_velocity="1000.0" k_effort="1000.0"/>
         <calibration rising="0.0" falling="0.0"/>
         <dynamics damping="0.0" friction="0.0"/>
-        <limit lower="-3.1416" upper="3.1416" effort="100.0" velocity="1.0" />
+        <limit lower="-3.1416" upper="3.1416" effort="1000.0" velocity="1000.0" />
         <visual>
             <geometry>
                 <sphere radius="0.5"/>
@@ -129,10 +129,10 @@
         <child link="leg_link"/>
         <origin xyz="0 0 0" rpy="0 0 0"/>
         <axis xyz="1 0 0" />
-        <safety_controller k_position="3.1416" k_velocity="1.0" k_effort="100.0"/>
+        <safety_controller k_position="3.1416" k_velocity="1000.0" k_effort="1000.0"/>
         <calibration rising="0.0" falling="0.0"/>
         <dynamics damping="0.0" friction="0.0"/>
-        <limit lower="-3.1416" upper="3.1416" effort="100.0" velocity="1.0" />
+        <limit lower="-3.1416" upper="3.1416" effort="1000.0" velocity="1000.0" />
         <visual>
             <geometry>
                 <sphere radius="0.5"/>
@@ -144,8 +144,8 @@
         <parent link="leg_link"/>
         <child link="arm_link"/>
         <origin xyz="0 0 0" rpy="0 0 0"/>
-        <limit lower="0.0" upper="100.0" effort="100.0" velocity="1.0" />
-        <safety_controller k_position="100.0" k_velocity="1.0" k_effort="100.0"/>
+        <limit lower="0.0" upper="100.0" effort="1000.0" velocity="1000.0" />
+        <safety_controller k_position="100.0" k_velocity="1000.0" k_effort="1000.0"/>
         <calibration rising="0.0" falling="0.0"/>
         <dynamics damping="0.1" friction="0.0"/>
         <visual>
@@ -160,10 +160,10 @@
         <child link="end_effector"/>
         <axis xyz="1 0 0" />
         <origin xyz="0 0 0" rpy="0 0 0"/>
-        <safety_controller k_position="3.1416" k_velocity="1.0" k_effort="100.0"/>
+        <safety_controller k_position="3.1416" k_velocity="1000.0" k_effort="1000.0"/>
         <calibration rising="0.0" falling="0.0"/>
         <dynamics damping="0.0" friction="0.0"/>
-        <limit lower="-3.1416" upper="3.1416" effort="100.0" velocity="1.0" />
+        <limit lower="-3.1416" upper="3.1416" effort="1000.0" velocity="1000.0" />
         <visual>
             <geometry>
                 <sphere radius="0.5"/>
@@ -176,10 +176,10 @@
         <child link="tool_mic"/>
         <axis xyz="0 1 0" />
         <origin xyz="0 0 0" rpy="0 0 0"/>
-        <safety_controller k_position="0.5236" k_velocity="1.0" k_effort="100.0"/>
+        <safety_controller k_position="0.5236" k_velocity="1000.0" k_effort="1000.0"/>
         <calibration rising="0.0" falling="0.0"/>
         <dynamics damping="0.0" friction="0.0"/>
-        <limit lower="0.0" upper="0.5236" effort="100.0" velocity="1.0" />
+        <limit lower="0.0" upper="0.5236" effort="1000.0" velocity="1000.0" />
         <stiffness value="0.0"/>
         <visual>
             <geometry>

@@ -47,6 +47,7 @@ def generate_launch_description():
         package='gazebo_ros',
         executable='spawn_entity.py',
         name='spawn_entity',
+        output='screen',
         arguments=[
             '-entity', 'giraff_robot',
             '-file', str(urdf_file),

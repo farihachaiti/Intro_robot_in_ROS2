@@ -17,6 +17,7 @@ class RobotController(Node):
     def __init__(self):
         super().__init__('robot_controller')
         buffer_size = 10.0
+        self.rate = rclpy.rate.Rate(10)
         self.tf_buffer = tf2_ros.Buffer(cache_time=tf2_ros.Duration(seconds=10.0, nanoseconds=10.0))
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.joint_trajectory_publisher = self.create_publisher(JointTrajectory, '/joint_trajectory', 10)
@@ -338,26 +339,9 @@ class RobotController(Node):
 
         return tau_list
  
-    def apply_torque(self, joint_name, torque, position):
-        msg = JointTrajectory()
-        msg.joint_names = [joint_name]
-        pos_msg = float(position)
-        point = JointTrajectoryPoint()
-        dt = 0.1
-        point.positions = [position]  # Set the joint position if required
-        
-        position = sp.Symbol('position')
-        dt = sp.Symbol('dt')
-        v = sp.Symbol('v')
-        v = sp.diff(position, dt)
-        a = sp.diff(v, dt)
-        point.velocities = [v]  # Set the joint velocity if required
-        point.accelerations = [a]
-        point.effort = [torque]
-        msg.points = [point]
-        self.joint_trajectory_publisher.publish(msg)
-
-        effort = ApplyJointEffort.Request()
+    def publish_joints(self, joint_name, position):
+        pos_jt = float(position)        
+        '''effort = ApplyJointEffort.Request()
         effort.joint_name = joint_name
         effort.effort = float(torque)
         
@@ -366,30 +350,42 @@ class RobotController(Node):
         future = self.joint_effort_srv_client.call_async(effort)
 
         # Wait for the result
-        rclpy.spin_until_future_complete(self, future)
+        #rclpy.spin_until_future_complete(self, future)'''
 
         joint_state_msg = JointState()
         joint_state_msg.header.stamp = self.get_clock().now().to_msg()
-        joint_state_msg.name = [joint_name]  # Add your joint names
-        joint_state_msg.position = [pos_msg]  # Add your joint positions
+        joint_state_msg.name = joint_name  # Add your joint names
+        joint_state_msg.position = pos_jt  # Add your joint positions
 
         # Publish joint state information
         self.joint_state_publisher.publish(joint_state_msg)
+        print("Published Joint State:")
+        print("Header: ", joint_state_msg.header)
+        print("Joint Names: ", joint_state_msg.name)
+        print("Joint Positions: ", joint_state_msg.position)   
+        self.get_logger().info("Joint States published successfully")
         # Check if the request was successful
-        if future.result() is not None:
+        '''if future.result() is not None:
             self.get_logger().info("Effort applied successfully")
         else:
-            self.get_logger().error("Failed to apply effort")
+            self.get_logger().error("Failed to apply effort")'''
+
         
 
     def control_script(self, joints, tau, graph, Kp, Kd):
        # Specify joint name (replace 'joint1' with your joint name)
         #for i in range(4):
         time_differential = 0.01
+        jt = JointTrajectory()
+        jt.header.stamp = self.get_clock().now().to_msg()
+        jt.header.frame_id = "base_link"
+        
         dt = sp.Symbol('time_differential')
+        dt = 0.1
         for k, node in enumerate(graph):
-            node = self.minimize_distance(node)
-            for i, pos in enumerate(node):
+            node_minimized = self.minimize_distance(node)
+            point = JointTrajectoryPoint()
+            for i, pos in enumerate(node_minimized):
                 errors = graph[len(graph)-1][i] - pos
                 position = sp.Symbol('pos')
                 v = sp.diff(position, dt)
@@ -400,15 +396,29 @@ class RobotController(Node):
                 tau_modified = tau[k, i] + pd_signal
 
                 if i<=3:
-                    self.apply_torque(joints[i], tau_modified, pos)
+                    jt.joint_names.append(joints[i])
+                    point.positions.append(pos) 
+                   
+                    # Set the joint position if required
+                    pos = sp.Symbol('pos')
+                    v = sp.Symbol('v')
+                    v = sp.diff(pos, dt)
+                    a = sp.diff(v, dt)
+                    point.velocities.append(v)  # Set the joint velocity if required
+                    point.accelerations.append(a)
+                    point.effort.append(tau_modified)
+                    jt.points[k].time_from_start = rclpy.Duration.from_sec(dt)
+                    jt.points.append(point)
                 else:
-                    joint_state_msg = JointState()
-                    joint_state_msg.header.stamp = self.get_clock().now().to_msg()
-                    joint_state_msg.name = [joints[i]]  # Add your joint names
-                    joint_state_msg.position = [np.radians(30)]  # Add your joint positions
-
-                    # Publish joint state information
-                    self.joint_state_publisher.publish(joint_state_msg)
+                    pos = np.radians(30)
+                    jt.joint_names.append(joints[i])
+                    point.positions.append(pos) 
+                    jt.points[k].time_from_start = rclpy.Duration.from_sec(dt)
+                    jt.points.append(point)
+                self.rate.sleep()
+                self.publish_joints(joints[i], pos)
+        self.rate.sleep()
+        self.joint_trajectory_publisher.publish(jt)
 
 
     def is_singular(self, J):
@@ -494,6 +504,7 @@ def main(args=None):
     Kp = 0.5
     Kd = 0.1
     theta5 = 30
+     
     try:
         while rclpy.ok():
             q_goal = node.solve_numerical_inverse_kinematics(np.array([0, 0, 0, 0]), np.array([1,2,1]), theta5)
@@ -503,11 +514,14 @@ def main(args=None):
             tau = node.compute_motion(np.array([1,2,1]), graph, Kp, Kd)
             tau_arr = np.array(np.mean(tau, axis=2))
             print(tau_arr)
+        
             joints = np.array(['base_joint', 'base_spherical_joint', 'leg_joint', 'arm_joint', 'end_effector_joint'])
+            # Trigger every 1 second
+            node.rate.sleep()
             node.control_script(joints, tau_arr, graph, Kp, Kd)
-            
             rclpy.spin(node)
-    except KeyboardInterrupt:
+            pass
+    except rclpy.exceptions.ROSInterruptException:
         pass
     finally:
         node.destroy_node()

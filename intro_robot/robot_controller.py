@@ -11,13 +11,13 @@ from sensor_msgs.msg import JointState
 import tf2_ros
 from urdf_parser_py.urdf import URDF
 from builtin_interfaces.msg import Time, Duration
+from intro_robot.giraff_robot import FramePublisher
 
 
 class RobotController(Node):
     def __init__(self):
         super().__init__('robot_controller')
         buffer_size = 10.0
-        self.rate = rclpy.rate.Rate(10)
         self.tf_buffer = tf2_ros.Buffer(cache_time=tf2_ros.Duration(seconds=10.0, nanoseconds=10.0))
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.joint_trajectory_publisher = self.create_publisher(JointTrajectory, '/joint_trajectory', 10)
@@ -354,8 +354,8 @@ class RobotController(Node):
 
         joint_state_msg = JointState()
         joint_state_msg.header.stamp = self.get_clock().now().to_msg()
-        joint_state_msg.name = joint_name  # Add your joint names
-        joint_state_msg.position = pos_jt  # Add your joint positions
+        joint_state_msg.name = [joint_name]  # Add your joint names
+        joint_state_msg.position = [pos_jt]  # Add your joint positions
 
         # Publish joint state information
         self.joint_state_publisher.publish(joint_state_msg)
@@ -379,45 +379,48 @@ class RobotController(Node):
         jt = JointTrajectory()
         jt.header.stamp = self.get_clock().now().to_msg()
         jt.header.frame_id = "base_link"
-        
-        dt = sp.Symbol('time_differential')
-        dt = 0.1
         for k, node in enumerate(graph):
             node_minimized = self.minimize_distance(node)
             point = JointTrajectoryPoint()
             for i, pos in enumerate(node_minimized):
-                errors = graph[len(graph)-1][i] - pos
-                position = sp.Symbol('pos')
-                v = sp.diff(position, dt)
+                position = pos
+                errors = graph[len(graph)-1][i] - position
+                dt = 0.1
+                # Create a Duration object
+                duration = Duration()
+                duration.sec = int(dt)  # Set the seconds part
+                duration.nanosec = int((dt - int(dt)) * 1e9)  # Set the nanoseconds part
+                pos = sp.Symbol('pos')
+                dt = sp.Symbol('dt')          
+                v = sp.diff(pos, dt)
+                v_float = v
+                v = sp.Symbol('v')
+                a = sp.diff(v, dt)
                 # Compute the PD control signal
-                pd_signal = Kp * errors + Kd * v
+                pd_signal = Kp * errors + Kd * v_float
 
                 # Add the PD control signal to the torques
                 tau_modified = tau[k, i] + pd_signal
-
+                
                 if i<=3:
                     jt.joint_names.append(joints[i])
-                    point.positions.append(pos) 
-                   
-                    # Set the joint position if required
-                    pos = sp.Symbol('pos')
-                    v = sp.Symbol('v')
-                    v = sp.diff(pos, dt)
-                    a = sp.diff(v, dt)
-                    point.velocities.append(v)  # Set the joint velocity if required
+                    point.positions.append(position)                     
+                    point.velocities.append(v_float)  # Set the joint velocity if required
                     point.accelerations.append(a)
                     point.effort.append(tau_modified)
-                    jt.points[k].time_from_start = rclpy.Duration.from_sec(dt)
+                    point.time_from_start = duration
                     jt.points.append(point)
                 else:
-                    pos = np.radians(30)
+                    position = np.radians(30)
                     jt.joint_names.append(joints[i])
-                    point.positions.append(pos) 
-                    jt.points[k].time_from_start = rclpy.Duration.from_sec(dt)
+                    point.positions.append(position) 
+                    point.velocities.append(0.0)  # Set the joint velocity if required
+                    point.accelerations.append(0.0)
+                    point.effort.append(0.0)
+                    point.time_from_start = duration
                     jt.points.append(point)
-                self.rate.sleep()
-                self.publish_joints(joints[i], pos)
-        self.rate.sleep()
+                self.publish_joints(joints[i], position)
+            FramePublisher.update_tf(node_minimized, joints[i])
         self.joint_trajectory_publisher.publish(jt)
 
 
@@ -517,9 +520,11 @@ def main(args=None):
         
             joints = np.array(['base_joint', 'base_spherical_joint', 'leg_joint', 'arm_joint', 'end_effector_joint'])
             # Trigger every 1 second
-            node.rate.sleep()
+            
+            #timer = node.create_timer(1.0, node.control_script(joints, tau_arr, graph, Kp, Kd))
             node.control_script(joints, tau_arr, graph, Kp, Kd)
-            rclpy.spin(node)
+            
+            rclpy.spin_once(node)
             pass
     except rclpy.exceptions.ROSInterruptException:
         pass

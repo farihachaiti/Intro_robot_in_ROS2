@@ -14,7 +14,6 @@ class FramePublisher():
     def __init__(self):
         self.node = rclpy.create_node('giraff_robot')
         self.tf_broadcaster = tf2_ros.StaticTransformBroadcaster(self.node)
-        self.publish_rate = rclpy.rate.Rate(10)
         #self.joint_state_publisher = self.node.create_publisher(JointState, '/joint_states', 10)
         self.node.declare_parameter('robot_description', '')
         if self.node.has_parameter('robot_description'):
@@ -27,27 +26,29 @@ class FramePublisher():
             self.joint_state_callback,
             10  # QoS profile depth
         )
-        self.timer = self.node.create_timer(1.0, self.joint_state_callback)  # Trigger every 1 second
+        #self.timer = self.node.create_timer(1.0, self.joint_state_callback)  # Trigger every 1 second
+
 
     def joint_state_callback(self, updated_msg):
         # Process joint state message
-        joint_state_msg = JointState()
+        #joint_state_msg = JointState()
         if updated_msg:
             print("Received Joint State:")
             print("Header: ", updated_msg.header)
-            print("Joint Names: ", updated_msg.name)
-            print("Joint Positions: ", updated_msg.position)            
-            joint_state_msg.header = updated_msg.header
-            joint_state_msg.name = updated_msg.name # Add your joint names
-            position = float(updated_msg.position)
-            joint_state_msg.position = position # Add your joint positions
+            print("Joint Names: ", updated_msg.name[0])
+            print("Joint Positions: ", updated_msg.position[0])            
+            #joint_state_msg.header = updated_msg.header
+            #joint_state_msg.name = updated_msg.name[0] # Add your joint names
+            #position = float(updated_msg.position[0])
+            #joint_state_msg.position = position # Add your joint positions
+            #self.update_tf(updated_msg.position[0], updated_msg.name[0])
         else:
             print("Error receiving Joint State!")
 
         # Publish joint state information
         #self.joint_state_publisher.publish(joint_state_msg)
         
-        self.update_tf(joint_state_msg.position, joint_state_msg.name)
+        
 
     def quaternion_from_euler(self, ai, aj, ak):
         ai /= 2.0
@@ -75,34 +76,46 @@ class FramePublisher():
     
 
 
+    def update_tf(self, q, j):
+        T = []
+        T.append(RobotController.compute_transform_matrix(q))
 
-    def update_tf(self, position, joint_name):
-        J = RobotController.compute_forward_kinematics_from_configuration(position)
-
-        x = J[1,:3]
-        y = J[2,:3]
-        z = J[3,:3]
-        # Extract the rotational part of the Jacobian
-        rotational_jacobian = J[3:, :]
-        joint_velocities = np.gradient(position, dt=0.01, axis=0, edge_order=2)
-        # Calculate the angular velocities (roll, pitch, yaw rates)
-        orientation_rates = np.dot(rotational_jacobian, joint_velocities)
-        roll = orientation_rates[0]
-        pitch = orientation_rates[1]
-        yaw = orientation_rates[2]
-        # Parse the URDF
         try:
             with open(self.robot_description, 'r') as urdf_file:
                 self.robot_desc = URDF.from_xml_string(urdf_file.read())
         except Exception as e:
             self.get_logger().error(f"Error parsing URDF: {e}")
             self.robot_desc = None
-        for joint in self.robot_desc.joints:
-            if joint.name == joint_name:
+ 
+
+        for i, joint in enumerate(self.robot_desc.joints):
+            if joint==j:
+                if i==0:
+                    roll = q[i]
+                    pitch = 0.0
+                    yaw = 0.0
+                elif i==1:
+                    roll = q[i]
+                    pitch = 0.0
+                    yaw = 0.0
+                elif i==2:
+                    roll = 0.0
+                    pitch = 0.0
+                    yaw = 0.0
+                elif i==3:
+                    roll = q[i]
+                    pitch = 0.0
+                    yaw = 0.0
+                elif i==4:
+                    roll = 0.0
+                    pitch = q[i]
+                    yaw = 0.0
+                x = T[i][1, 3]
+                y = T[i][2, 3]
+                z = T[i][3, 3]
                 frame = joint.child
-                parent_frame = joint.parent
-                return joint.parent, joint.child
-        self.publish_tf(x, y, z, roll, pitch, yaw, frame, parent_frame)
+                parent_frame = joint.parent               
+                self.publish_tf(x, y, z, roll, pitch, yaw, frame, parent_frame)
 
 
     def publish_tf(self, x, y, z, roll, pitch, yaw, frame, parent_frame):
@@ -130,29 +143,27 @@ class FramePublisher():
         except Exception as e:
              print(f"Failed to publish transform {e}.")
              print(f"Transform lookup time: {t.header.stamp}")
-        self.publish_rate.sleep()
+        
 
 def main():
     rclpy.init()
     robot = FramePublisher()
-
-    timer_period = 1.0 #upload this file to vm
-    rate = rclpy.rate.Rate(10)
     try:
         while rclpy.ok():
+            timer0 = robot.node.create_timer(1.0, lambda:robot.publish_tf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'base_link', 'world'))
             timer1 = robot.node.create_timer(1.0, lambda:robot.publish_tf(1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'leg_link', 'base_link'))
             timer2 = robot.node.create_timer(1.1, lambda:robot.publish_tf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'arm_link', 'leg_link'))
             timer3 = robot.node.create_timer(1.1, lambda:robot.publish_tf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'end_effector', 'arm_link'))
             timer4 = robot.node.create_timer(1.1, lambda:robot.publish_tf(0.0, 0.0, 0.0, 0.0, np.radians(30.0), 0.0, 'tool_mic', 'end_effector'))
             rclpy.spin(robot.node)
+            timer0.cancel()
+            timer1.cancel()
+            timer2.cancel()
+            timer3.cancel()
+            timer4.cancel()          
     except KeyboardInterrupt:
         pass
     finally:
-        timer1.cancel()
-        timer2.cancel()
-        timer3.cancel()
-        timer4.cancel()
-        robot.timer.cancel()
         robot.node.destroy_node()
         rclpy.shutdown()
 

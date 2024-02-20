@@ -11,7 +11,7 @@ from sensor_msgs.msg import JointState
 import tf2_ros
 from urdf_parser_py.urdf import URDF
 from builtin_interfaces.msg import Time, Duration
-from intro_robot.giraff_robot import FramePublisher
+from intro_robot.giraff_robot import update_tf
 
 
 class RobotController(Node):
@@ -375,34 +375,34 @@ class RobotController(Node):
     def control_script(self, joints, tau, graph, Kp, Kd):
        # Specify joint name (replace 'joint1' with your joint name)
         #for i in range(4):
-        time_differential = 0.01
         jt = JointTrajectory()
         jt.header.stamp = self.get_clock().now().to_msg()
         jt.header.frame_id = "base_link"
         for k, node in enumerate(graph):
             node_minimized = self.minimize_distance(node)
+            node_minimized = np.append(node_minimized, 30.0)
             point = JointTrajectoryPoint()
             for i, pos in enumerate(node_minimized):
-                position = pos
-                errors = graph[len(graph)-1][i] - position
-                dt = 0.1
-                # Create a Duration object
-                duration = Duration()
-                duration.sec = int(dt)  # Set the seconds part
-                duration.nanosec = int((dt - int(dt)) * 1e9)  # Set the nanoseconds part
-                pos = sp.Symbol('pos')
-                dt = sp.Symbol('dt')          
-                v = sp.diff(pos, dt)
-                v_float = v
-                v = sp.Symbol('v')
-                a = sp.diff(v, dt)
-                # Compute the PD control signal
-                pd_signal = Kp * errors + Kd * v_float
-
-                # Add the PD control signal to the torques
-                tau_modified = tau[k, i] + pd_signal
-                
                 if i<=3:
+                    position = pos
+                    errors = graph[len(graph)-1][i] - position
+                    dt = 0.1
+                    # Create a Duration object
+                    duration = Duration()
+                    duration.sec = int(dt)  # Set the seconds part
+                    duration.nanosec = int((dt - int(dt)) * 1e9)  # Set the nanoseconds part
+                    pos = sp.Symbol('pos')
+                    dt = sp.Symbol('dt')          
+                    v = sp.diff(pos, dt)
+                    v_float = v
+                    v = sp.Symbol('v')
+                    a = sp.diff(v, dt)
+                    # Compute the PD control signal
+                    pd_signal = Kp * errors + Kd * v_float
+
+                    # Add the PD control signal to the torques
+                    tau_modified = tau[k, i] + pd_signal
+                    
                     jt.joint_names.append(joints[i])
                     point.positions.append(position)                     
                     point.velocities.append(v_float)  # Set the joint velocity if required
@@ -420,8 +420,12 @@ class RobotController(Node):
                     point.time_from_start = duration
                     jt.points.append(point)
                 self.publish_joints(joints[i], position)
-            FramePublisher.update_tf(node_minimized, joints[i])
+                update_tf(joints[i], node_minimized)
         self.joint_trajectory_publisher.publish(jt)
+        print("Published Joint Trajectory:")
+        print("Points: ", jt.points)
+        print("Joint Names: ", jt.joint_names)
+        self.get_logger().info("Joint Trajectory published successfully")
 
 
     def is_singular(self, J):
@@ -508,24 +512,19 @@ def main(args=None):
     Kd = 0.1
     theta5 = 30
      
-    try:
-        while rclpy.ok():
-            q_goal = node.solve_numerical_inverse_kinematics(np.array([0, 0, 0, 0]), np.array([1,2,1]), theta5)
-            q_goal = node.minimize_distance(q_goal, theta5)
-            graph = node.get_trajectory(q_goal, np.array([0, 0, 0, 0]))
-            print(graph)
-            tau = node.compute_motion(np.array([1,2,1]), graph, Kp, Kd)
-            tau_arr = np.array(np.mean(tau, axis=2))
-            print(tau_arr)
+    try:       
+        q_goal = node.solve_numerical_inverse_kinematics(np.array([0, 0, 0, 0]), np.array([1,2,1]), theta5)
+        q_goal = node.minimize_distance(q_goal, theta5)
+        graph = node.get_trajectory(q_goal, np.array([0, 0, 0, 0]))
+        print(graph)
+        tau = node.compute_motion(np.array([1,2,1]), graph, Kp, Kd)
+        tau_arr = np.array(np.mean(tau, axis=2))
+        print(tau_arr)
+    
+        joints = np.array(['base_joint', 'base_spherical_joint', 'leg_joint', 'arm_joint', 'end_effector_joint'])
+        node.control_script(joints, tau_arr, graph, Kp, Kd)
         
-            joints = np.array(['base_joint', 'base_spherical_joint', 'leg_joint', 'arm_joint', 'end_effector_joint'])
-            # Trigger every 1 second
-            
-            #timer = node.create_timer(1.0, node.control_script(joints, tau_arr, graph, Kp, Kd))
-            node.control_script(joints, tau_arr, graph, Kp, Kd)
-            
-            rclpy.spin_once(node)
-            pass
+        rclpy.spin_once(node)
     except rclpy.exceptions.ROSInterruptException:
         pass
     finally:

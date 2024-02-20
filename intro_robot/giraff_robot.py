@@ -6,26 +6,35 @@ import math
 import numpy as np
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
-from intro_robot.robot_controller import RobotController
 from urdf_parser_py.urdf import URDF
 
-class FramePublisher():
 
+robot = None
+
+
+class FramePublisher():
+    _node_created = False
     def __init__(self):
-        self.node = rclpy.create_node('giraff_robot')
-        self.tf_broadcaster = tf2_ros.StaticTransformBroadcaster(self.node)
-        #self.joint_state_publisher = self.node.create_publisher(JointState, '/joint_states', 10)
-        self.node.declare_parameter('robot_description', '')
-        if self.node.has_parameter('robot_description'):
-            self.robot_description = self.node.get_parameter('robot_description').get_parameter_value().string_value
+        if not FramePublisher._node_created:
+            self.node = rclpy.create_node('giraff_robot')
+            self.tf_broadcaster = tf2_ros.StaticTransformBroadcaster(self.node)
+            #self.joint_state_publisher = self.node.create_publisher(JointState, '/joint_states', 10)
+            self.node.declare_parameter('robot_description', '')
+            if self.node.has_parameter('robot_description'):
+                self.robot_description = self.node.get_parameter('robot_description').get_parameter_value().string_value
+            else:
+                self.node.get_logger().error("Parameter 'robot_description' is missing!")
+            self.node.create_subscription(
+                JointState,
+                'joint_states',
+                self.joint_state_callback,
+                10  # QoS profile depth
+            )
+            FramePublisher._node_created = True
+
         else:
-            self.node.get_logger().error("Parameter 'robot_description' is missing!")
-        self.node.create_subscription(
-            JointState,
-            'joint_states',
-            self.joint_state_callback,
-            10  # QoS profile depth
-        )
+            print("Node has already been created.")
+        
         #self.timer = self.node.create_timer(1.0, self.joint_state_callback)  # Trigger every 1 second
 
 
@@ -74,48 +83,57 @@ class FramePublisher():
 
         return q
     
+    def compute_transform_matrix(self, q):
+        # Extract joint angles and prismatic displacements
+        theta1, theta2, d3, theta4, theta5 = q
+        
+
+        # Define robot parameters (replace these with the actual parameters of your robot)
+        L1 = 0.1
+        L2 = 0.6
+        L3 = 0.6
+        L4 = 0.6
+        L5 = 0.6
+
+        T01 =  np.array([
+        [1, 0, 0, 0],
+        [0, np.cos(np.radians(theta1)), -np.sin(np.radians(theta1)), 0],
+        [0, np.sin(np.radians(theta1)), np.cos(np.radians(theta1)), L1],
+        [0, 0, 0, 1]
+        ])
+
+        T12 =  np.array([
+        [1, 0, 0, 0],
+        [0, np.cos(np.radians(theta2)), -np.sin(np.radians(theta2)), 0],
+        [0, np.sin(np.radians(theta2)), np.cos(np.radians(theta2)), L2],
+        [0, 0, 0, 1]
+        ])
+
+        T23 =  np.array([
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, d3+L3],
+        [0, 0, 0, 1]
+        ])
 
 
-    def update_tf(self, q, j):
-        T = []
-        T.append(RobotController.compute_transform_matrix(q))
+        T34 =  np.array([
+        [1, 0, 0, -L4],
+        [0, np.cos(np.radians(theta4)), -np.sin(np.radians(theta4)), 0],
+        [0, np.sin(np.radians(theta4)), np.cos(np.radians(theta4)), 0],
+        [0, 0, 0, 1]
+        ])
 
-        try:
-            with open(self.robot_description, 'r') as urdf_file:
-                self.robot_desc = URDF.from_xml_string(urdf_file.read())
-        except Exception as e:
-            self.get_logger().error(f"Error parsing URDF: {e}")
-            self.robot_desc = None
- 
+        T4ee =  np.array([
+        [np.cos(np.radians(theta5)), 0, np.sin(np.radians(theta5)), 0],
+        [0, 1, 0, 0],
+        [-np.sin(np.radians(theta5)), 0, np.cos(np.radians(theta5)), -L5],
+        [0, 0, 0, 1]
+        ])
 
-        for i, joint in enumerate(self.robot_desc.joints):
-            if joint==j:
-                if i==0:
-                    roll = q[i]
-                    pitch = 0.0
-                    yaw = 0.0
-                elif i==1:
-                    roll = q[i]
-                    pitch = 0.0
-                    yaw = 0.0
-                elif i==2:
-                    roll = 0.0
-                    pitch = 0.0
-                    yaw = 0.0
-                elif i==3:
-                    roll = q[i]
-                    pitch = 0.0
-                    yaw = 0.0
-                elif i==4:
-                    roll = 0.0
-                    pitch = q[i]
-                    yaw = 0.0
-                x = T[i][1, 3]
-                y = T[i][2, 3]
-                z = T[i][3, 3]
-                frame = joint.child
-                parent_frame = joint.parent               
-                self.publish_tf(x, y, z, roll, pitch, yaw, frame, parent_frame)
+        return T01, T12, T23, T34, T4ee
+
+    
 
 
     def publish_tf(self, x, y, z, roll, pitch, yaw, frame, parent_frame):
@@ -144,27 +162,74 @@ class FramePublisher():
              print(f"Failed to publish transform {e}.")
              print(f"Transform lookup time: {t.header.stamp}")
         
+def update_tf(joint_name=None, q=None):
+    global robot
+    if robot is None:
+        robot = FramePublisher()
+    if q is not None:
+        T = []
+        T.append(robot.compute_transform_matrix(q))
+        try:
+            with open(robot.robot_description, 'r') as urdf_file:
+                robot.robot_desc = URDF.from_xml_string(urdf_file.read())
+        except Exception as e:
+            robot.get_logger().error(f"Error parsing URDF: {e}")
+            robot.robot_desc = None
+
+
+        for i, joint in enumerate(robot.robot_desc.joints):
+            if joint.name==joint_name:
+                print('sdfsdfsd000000000000000')
+                print(i)
+                if i==0:
+                    roll = q[i]
+                    pitch = 0.0
+                    yaw = 0.0
+                elif i==1:
+                    roll = q[i]
+                    pitch = 0.0
+                    yaw = 0.0
+                elif i==2:
+                    roll = 0.0
+                    pitch = 0.0
+                    yaw = 0.0
+                elif i==3:
+                    roll = q[i]
+                    pitch = 0.0
+                    yaw = 0.0
+                elif i==4:
+                    roll = 0.0
+                    pitch = q[i]
+                    yaw = 0.0
+                x = T[i][1, 3]
+                y = T[i][2, 3]
+                z = T[i][3, 3]
+                frame = joint.child
+                parent_frame = joint.parent  
+                print('okay1')             
+                robot.publish_tf(x, y, z, roll, pitch, yaw, frame, parent_frame)
+    else:
+        print('okay2')
+        robot.publish_tf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'base_link', 'world')
+        robot.publish_tf(1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'leg_link', 'base_link')
+        robot.publish_tf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'arm_link', 'leg_link')
+        robot.publish_tf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'end_effector', 'arm_link')
+        robot.publish_tf(0.0, 0.0, 0.0, 0.0, np.radians(30.0), 0.0, 'tool_mic', 'end_effector')
+   
+        
+
 
 def main():
-    rclpy.init()
-    robot = FramePublisher()
-    try:
+    rclpy.init()   
+    try:      
+        update_tf()
         while rclpy.ok():
-            timer0 = robot.node.create_timer(1.0, lambda:robot.publish_tf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'base_link', 'world'))
-            timer1 = robot.node.create_timer(1.0, lambda:robot.publish_tf(1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'leg_link', 'base_link'))
-            timer2 = robot.node.create_timer(1.1, lambda:robot.publish_tf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'arm_link', 'leg_link'))
-            timer3 = robot.node.create_timer(1.1, lambda:robot.publish_tf(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 'end_effector', 'arm_link'))
-            timer4 = robot.node.create_timer(1.1, lambda:robot.publish_tf(0.0, 0.0, 0.0, 0.0, np.radians(30.0), 0.0, 'tool_mic', 'end_effector'))
-            rclpy.spin(robot.node)
-            timer0.cancel()
-            timer1.cancel()
-            timer2.cancel()
-            timer3.cancel()
-            timer4.cancel()          
+            rclpy.spin(robot.node)       
     except KeyboardInterrupt:
         pass
     finally:
         robot.node.destroy_node()
+        FramePublisher._node_created = False
         rclpy.shutdown()
 
 if __name__ == '__main__':

@@ -48,6 +48,7 @@ def generate_launch_description():
         executable='spawn_entity.py',
         name='spawn_entity',
         output='screen',
+        namespace='giraff_robot',
         arguments=[
             '-entity', 'giraff_robot',
             '-file', str(urdf_file),
@@ -59,6 +60,7 @@ def generate_launch_description():
         package='intro_robot',
         executable='robot_controller',
         name='robot_controller',
+        namespace='giraff_robot',
         output='screen',
         parameters=[{'robot_description' : LaunchConfiguration('use_urdf')}],
         emulate_tty=True,  # Keeps color in the terminal
@@ -70,6 +72,7 @@ def generate_launch_description():
         package='rviz2',
         executable='rviz2',
         name='rviz2',
+        namespace='giraff_robot',
         output='screen',
         arguments=['-d', str(rviz_config)],
         parameters=[{'use_sim_time': use_sim_time}],
@@ -79,6 +82,7 @@ def generate_launch_description():
         package='intro_robot',  # Replace with the actual name of your ROS 2 package
         executable='giraff_robot',  # Replace with the name of your node executable
         name='giraff_robot',
+        namespace='giraff_robot',
         output='screen',
 	    parameters=[{'robot_description' : LaunchConfiguration('use_urdf')}],
 
@@ -99,6 +103,7 @@ def generate_launch_description():
                 '/gazebo.launch.py']),
                 launch_arguments=[
                 ('world', LaunchConfiguration('use_world')),
+                ('robot_description', LaunchConfiguration('use_urdf')),
             ],
         ),
         SetEnvironmentVariable('QT_QPA_PLATFORM', 'wayland'),

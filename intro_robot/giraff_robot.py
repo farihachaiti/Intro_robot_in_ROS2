@@ -168,7 +168,13 @@ def update_tf(joint_name=None, q=None):
         robot = FramePublisher()
     if q is not None:
         T = []
-        T.append(robot.compute_transform_matrix(q))
+        T01, T12, T23, T34, T4ee = robot.compute_transform_matrix(q)
+        T.append(T01)
+        T.append(T12)
+        T.append(T23)
+        T.append(T34)
+        T.append(T4ee)
+        T_arr = np.array(T)
         try:
             with open(robot.robot_description, 'r') as urdf_file:
                 robot.robot_desc = URDF.from_xml_string(urdf_file.read())
@@ -176,11 +182,9 @@ def update_tf(joint_name=None, q=None):
             robot.get_logger().error(f"Error parsing URDF: {e}")
             robot.robot_desc = None
 
-
+        
         for i, joint in enumerate(robot.robot_desc.joints):
             if joint.name==joint_name:
-                print('sdfsdfsd000000000000000')
-                print(i)
                 if i==0:
                     roll = q[i]
                     pitch = 0.0
